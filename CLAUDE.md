@@ -8,7 +8,7 @@ Main goal (user): smooth and cheap on energy. Look and behaviour don't change wi
 - `~/.config/vsndbar` — the bar: one Swift process (`Sources/`), `make install` → `~/Applications/VsndBar.app`
   + LaunchAgent `com.vsndrg.vsndbar` + `~/.local/bin/vsndbar` (CLI: `toggle`, `sleep`, `layout`, `screens`).
   State in `~/.local/state/vsndbar/` (theme, sidecar-*, sleep.log, daemon.log).
-- `~/.config/aerospace` — `aerospace.toml`, `patches/{bar-state,monitors,queries,switch-flicker,window-hiding}.patch`,
+- `~/.config/aerospace` — `aerospace.toml`, `patches/{bar-state,menu-bar,monitors,queries,switch-flicker,window-hiding}.patch`,
   `patches/build.sh [--install|--restore]` (source in `~/.cache/aerospace-src`, builds offline)
 - `~/.config/sketchybar` — the previous bar (Lua via SbarLua + barhelper), archived: disabled, not uninstalled.
 - `~/.config/karabiner` — F6 → `~/.local/bin/vsndbar sleep` (its karabiner.json has the user's own uncommitted edits).
@@ -27,7 +27,12 @@ Main goal (user): smooth and cheap on energy. Look and behaviour don't change wi
   for it. Only an app LaunchServices launched gets main thread priority 46 (exec'd by launchd: 31) — the bar
   renders every animation frame on the main thread. Needs `-target arm64-apple-macos26.0` (else -10825).
   Signed with the local `aerospace-local-codesign` cert.
-- cmd-shift-b → `vsndbar toggle` → Darwin notification `com.vsndrg.vsndbar.toggle`.
+- cmd-shift-b → `vsndbar toggle` → Darwin notification `com.vsndrg.vsndbar.toggle`: swaps the bar and the
+  system menu bar. Shown via private SkyLight `SLSSetMenuBarVisibilityOverrideOnDisplay` (dlsym), auto-hide
+  stays on. NOT via `_HIHideMenuBar`: that change makes WindowServer pull every window parked in a corner
+  fully on screen (~100ms flash, apps too slow to re-hide faster). The override outlives the process →
+  cleared at daemon start. visibleFrame still shrinks → AeroSpace menu-bar.patch ignores the menu bar.
+  (`launchctl kickstart -k` restarts only the launcher, the old daemon keeps running.)
 
 ## Hard constraints (found the hard way, don't re-derive)
 Bar:
@@ -51,7 +56,8 @@ Bar:
   Menu: text weight + corner radius slider; picks go straight to `Daemon.menuSelect`, the menu updates in
   place and stays open; closes on a click elsewhere / app activation (ignored right after a menu click:
   AeroSpace focuses the clicked display) — those monitors exist only while it is open. Slider = system
-  Slider drawn only; the daemon drags it itself (knob 22pt), previews live, commits on release.
+  Slider tracking the mouse itself (its pressed glass knob works in the never-key panel), previews live,
+  commits on release (onEditingChanged).
   Popups appear by insertion into a GlassEffectContainer on `.bouncy` + `.materialize`; panels have a 20pt
   transparent margin for the materialize blur. First render of a new panel is slow → warmed at start.
 - F6 (Karabiner) → `vsndbar sleep`: ends Sidecar sessions (private SidecarCore `SidecarDisplayManager`,
@@ -78,19 +84,32 @@ AeroSpace:
   the window. Bar h 32 = notch strip. Per display strip = min(32, its menu bar height) (built-in 33, iPad
   30); on a shorter strip the islands are scaled as a whole, gap kept at G. Windows start at 38 built-in /
   36 others, outer.bottom 5 (AeroSpace lays out 1pt short). aerospace.toml gaps must be changed by hand.
-- Islands: regular Liquid Glass, no tint, continuous corners. Corner radius = ONE number (menu slider
+- Islands: Liquid Glass (kind in `Config`), continuous corners. Corner radius = ONE number (menu slider
   0…`screenCorner` 21, default 8.5, saved in the theme state) for islands + tooltip, each min(r, h/2).
   Theme menu keeps the system menu radius 12.
-- Lens (selected workspace) h−6, inset 3: light glass (regular, 30% white tint) on the focused display,
-  regular on the others; default `.bouncy`, clamped to the island. Hover: `.primary` fill 50%, same in menu.
+- Lens (selected workspace) h−6, inset 3: light glass (`lensGlass`) on the focused display,
+  `lensGlassOther` on the others; default `.bouncy`, clamped to the island. Hover: `.primary` fill 50%, same in menu.
 - No accent, no active-window border. Text/icons: system label colors.
+- Legibility follows the wallpaper like the menu bar: each island is in the light (dark text) or dark
+  appearance by the mean luminance under it (`Config.lightOn/lightOff` 0.3/0.2). Read via the private
+  CGWindowListCreateImage (dlsym) below the bar's window = wallpaper only (may light the
+  screen-capture privacy dot for a moment — seen once, unconfirmed). Only on bar
+  open, display change, wallpaper change (watches `~/Library/Application Support/com.apple.wallpaper/Store`,
+  ignores rewrites that only bump LastUse); every read logged to `backdrop.log`;
+  NOT per minute (user: too costly) → dynamic/aerial wallpapers aren't followed. Status text, theme menu
+  items/slider and tooltip all `.primary` (user: no translucent text there).
 - Built-in display bottom corners masked to match the top ones (`Corners`, `screenCorner` 21): static
   layer, hidden on native fullscreen Spaces, `sharingType = .none` (not in screenshots).
 - App icons follow the system icon theme: the daemon watches `~/Library/Preferences`; 5–10s lag accepted.
 - Text: SF Pro Text, weight from the menu (Regular/Medium/Semibold, secondary one step lighter). Date =
-  time weight, "Mon 28 Sep" (English). Battery: level knocked out of a solid body like macOS, template
+  time weight, "Mon 28 Sep" (English). Battery: level knocked out of a fully opaque body + bolt (user: no translucency), template
   image, red at ≤20% off AC; tooltip wording = macOS menu; updates as soon as IOKit reports (user OK'd).
 - Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
+- Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
+  hover `.smooth(0.2)`), applied by `make install`.
+- Glass kinds too: `islandGlass` .clear + 15% black, `popupGlass` .regular (matte: menu + tooltip lie over
+  windows), `lensGlass` .clear + 10% white, `lensGlassOther` .clear + 15% black; lenses made `.interactive()`
+  in code.
 - Workspaces: every bar shows ALL existing workspaces (occupied or shown); ones living on another monitor
   carry that monitor's device glyph (laptopcomputer / ipad.landscape / display) between digit and icons.
   Right side identical on every monitor. Bar clicks = cmd-N. Layout click = next input source, clock click

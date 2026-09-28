@@ -116,6 +116,7 @@ final class Daemon {
   let aerospace = AeroSpace()
 
   var theme = Theme.load()
+  /// cmd-shift-b: the system menu bar instead of the bar (showMenuBar)
   var hidden = false
   var aero: AeroState?
   var displays = currentDisplays()
@@ -123,6 +124,9 @@ final class Daemon {
 
   var minuteTimer: Timer?
   var prefsWatcher: DispatchSourceFileSystemObject?
+  var wallpaperWatcher: DispatchSourceFileSystemObject?
+  var backdropLater: DispatchWorkItem?
+  var wallpaperNow = wallpaperChoice()
   var iconThemeNow = iconTheme()
   var toggleToken: Int32 = 0
   var displaySettle: DispatchWorkItem?
@@ -204,15 +208,18 @@ final class Daemon {
       self?.corners.refresh()
     }
 
-    // cmd-shift-b: `vsndbar toggle`
+    showMenuBar(false, force: true) // left shown by a previous daemon
+    // cmd-shift-b: `vsndbar toggle` swaps the bar and the system menu bar
     notify_register_dispatch(Config.toggleNotification, &toggleToken, .main) { [weak self] _ in
       guard let self else { return }
       hidden.toggle()
+      showMenuBar(hidden)
       publish()
     }
 
     sidecar.watch()
     watchIconTheme()
+    watchWallpaper()
     NSApplication.shared.run()
   }
 
@@ -265,9 +272,11 @@ final class Daemon {
       let list = currentDisplays()
       guard !list.isEmpty else { return } // mid-reconfiguration: keep what we have
       displays = list
+      if hidden { showMenuBar(true) } // a new display
       menuBarRetries = 0
       publish()
       settleMenuBars()
+      sampleBackdrop(after: 0.5, why: "displays changed") // the bars may lie on another part of the wallpaper now
     }
     displaySettle = w
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
@@ -359,5 +368,37 @@ final class Daemon {
     src.setCancelHandler { close(fd) }
     src.resume()
     prefsWatcher = src
+  }
+
+  // MARK: Wallpaper
+
+  /// The islands' appearance follows the wallpaper under them (GlassBar.sampleBackdrop).
+  /// Read only when a bar opens, displays change and the wallpaper is changed:
+  /// a wallpaper that changes by itself (dynamic, aerial) isn't followed.
+  func sampleBackdrop(after delay: Double, why: String) {
+    backdropLater?.cancel()
+    let w = DispatchWorkItem { [weak self] in self?.bar.sampleBackdrop(why: why) }
+    backdropLater = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
+  }
+
+  // A new wallpaper is saved to the wallpaper store (Index.plist replaced),
+  // then fades in on screen: read the screen once it's there. The store is
+  // also rewritten just to note the wallpaper was used (wake, unlock…): those
+  // writes change nothing but the LastUse stamps and are skipped.
+  func watchWallpaper() {
+    let fd = open(NSHomeDirectory() + "/Library/Application Support/com.apple.wallpaper/Store", O_EVTONLY)
+    guard fd >= 0 else { return }
+    let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write], queue: .main)
+    src.setEventHandler { [weak self] in
+      guard let self else { return }
+      let c = wallpaperChoice()
+      guard c != wallpaperNow else { return }
+      wallpaperNow = c
+      sampleBackdrop(after: 1.5, why: "wallpaper changed")
+    }
+    src.setCancelHandler { close(fd) }
+    src.resume()
+    wallpaperWatcher = src
   }
 }

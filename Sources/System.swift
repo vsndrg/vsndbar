@@ -22,16 +22,15 @@ func nsFont(_ family: String, _ style: String, _ size: CGFloat) -> NSFont {
   return f
 }
 
-/// Battery, drawn like macOS: a solid squircle body, the charged part opaque,
-/// the rest translucent, the level knocked out of the whole body (readable
-/// wherever the fill edge falls); optional bolt to the left.
+/// Battery: a solid squircle body, all of it opaque (legible on the clear
+/// glass; the level reads from the number), the level knocked out of it;
+/// optional bolt to the left.
 let batteryHeight: CGFloat = 13
 func batteryWidth(_ state: Int) -> CGFloat { (state > 0 ? 9 : 0) + 28 + 1 + 2 }
 
 func drawBattery(_ ctx: CGContext, at origin: CGPoint, level: Int, state: Int, color: CGColor,
                  style: String = "Bold", size: CGFloat = 10) {
   let bw: CGFloat = 28, bh = batteryHeight, nub: CGFloat = 2, gap: CGFloat = 1
-  let empty: CGFloat = 0.4 // alpha of the uncharged part and the nub
   ctx.saveGState()
   ctx.translateBy(x: origin.x, y: origin.y)
   ctx.beginTransparencyLayer(auxiliaryInfo: nil) // keeps the digit knock-out local
@@ -44,21 +43,13 @@ func drawBattery(_ ctx: CGContext, at origin: CGPoint, level: Int, state: Int, c
     b.addLine(to: CGPoint(x: cx + 3.2, y: cy + 0.8))
     b.addLine(to: CGPoint(x: cx + 0.2, y: cy + 0.8))
     b.closeSubpath()
-    ctx.setAlpha(state == 1 ? 1 : 0.45)
     ctx.addPath(b); ctx.setFillColor(color); ctx.fillPath()
-    ctx.setAlpha(1)
     ctx.translateBy(x: 9, y: 0)
   }
   let body = CGRect(x: 0, y: 0, width: bw, height: bh)
   ctx.setFillColor(color)
-  ctx.setAlpha(empty)
   ctx.addPath(squircle(body, 4)); ctx.fillPath()
   ctx.addPath(squircle(CGRect(x: bw + gap, y: bh / 2 - 2.25, width: nub, height: 4.5), 1)); ctx.fillPath()
-  ctx.setAlpha(1)
-  ctx.saveGState()
-  ctx.clip(to: CGRect(x: 0, y: 0, width: bw * CGFloat(max(0, min(100, level))) / 100, height: bh))
-  ctx.addPath(squircle(body, 4)); ctx.fillPath() // over the translucent body: no seam at the edge
-  ctx.restoreGState()
 
   let f = nsFont(Config.family, style, size)
   let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(level)", attributes: [
@@ -105,6 +96,33 @@ func deviceSymbol(_ kind: String) -> String {
   case "builtin": "laptopcomputer"
   case "ipad": "ipad.landscape"
   default: "display"
+  }
+}
+
+/// cmd-shift-b swaps the bar and the system menu bar. The menu bar stays
+/// auto-hidden: turning that off changes every display's usable area, and
+/// WindowServer then pulls the windows AeroSpace parks in a corner back into
+/// view (~100ms, until AeroSpace re-hides them). SkyLight's per-display
+/// override just shows it. The override outlives the process: the daemon
+/// clears it at start.
+private typealias MenuBarOverride = @convention(c) (Int32, UInt32, Bool) -> Int32
+private let menuBarOverride: MenuBarOverride? = {
+  guard let h = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW),
+        let f = dlsym(h, "SLSSetMenuBarVisibilityOverrideOnDisplay") else { return nil }
+  return unsafeBitCast(f, to: MenuBarOverride.self)
+}()
+/// displays the override shows the menu bar on (setting it again is a screen
+/// change again: only new displays get it)
+private var menuBarShownOn = Set<CGDirectDisplayID>()
+
+func showMenuBar(_ on: Bool, force: Bool = false) {
+  guard let f = menuBarOverride else { return }
+  let cid = CGSMainConnectionID()
+  for s in NSScreen.screens {
+    let did = displayID(s)
+    guard force || menuBarShownOn.contains(did) != on else { continue }
+    _ = f(cid, did, on)
+    if on { menuBarShownOn.insert(did) } else { menuBarShownOn.remove(did) }
   }
 }
 
@@ -203,4 +221,65 @@ func iconTheme() -> String {
   return keys.map { k in
     CFPreferencesCopyAppValue(k as CFString, kCFPreferencesAnyApplication).map { "\($0)" } ?? "-"
   }.joined(separator: "|").filter { $0.isLetter || $0.isNumber || $0 == "|" || $0 == "." || $0 == "-" }
+}
+
+// MARK: - Backdrop
+
+/// CGWindowListCreateImage is gone from the SDK (macOS 15) but still in the
+/// system. Below the bar's window lies only the desktop (the wallpaper and the
+/// desktop icons: windows sit above the backstop menu level) — what the glass
+/// refracts. No screen recording permission needed for that.
+private typealias WindowListImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+private let windowListImage: WindowListImage? = dlsym(dlopen(nil, RTLD_NOW), "CGWindowListCreateImage")
+  .map { unsafeBitCast($0, to: WindowListImage.self) }
+
+private let linear: [Float] = (0..<256).map { i in
+  let c = Float(i) / 255
+  return c <= 0.04045 ? c / 12.92 : powf((c + 0.055) / 1.055, 2.4)
+}
+
+/// Relative luminance (0 black … 1 white) of what lies below `window` in the
+/// top `height` points of display `did`: one value per point column.
+func backdropProfile(_ did: CGDirectDisplayID, below window: CGWindowID, height: CGFloat) -> [Float]? {
+  let b = CGDisplayBounds(did)
+  guard let f = windowListImage, b.width > 0, height > 0,
+        let img = f(CGRect(x: b.minX, y: b.minY, width: b.width, height: height),
+                    CGWindowListOption.optionOnScreenBelowWindow.rawValue, window,
+                    CGWindowImageOption([.boundsIgnoreFraming, .nominalResolution]).rawValue)?.takeRetainedValue()
+  else { return nil }
+  let w = Int(b.width), h = max(1, Int(height))
+  var px = [UInt8](repeating: 0, count: w * h * 4)
+  let ok = px.withUnsafeMutableBytes { buf -> Bool in
+    guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+    ctx.interpolationQuality = .medium
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return true
+  }
+  guard ok else { return nil }
+  var out = [Float](repeating: 0, count: w)
+  for y in 0..<h {
+    for x in 0..<w {
+      let i = (y * w + x) * 4
+      out[x] += 0.2126 * linear[Int(px[i])] + 0.7152 * linear[Int(px[i + 1])] + 0.0722 * linear[Int(px[i + 2])]
+    }
+  }
+  return out.map { $0 / Float(h) }
+}
+
+/// The wallpaper store (Index.plist) without its LastUse stamps: what is
+/// chosen for which display and Space.
+func wallpaperChoice() -> NSDictionary? {
+  let path = NSHomeDirectory() + "/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
+  guard let d = FileManager.default.contents(atPath: path),
+        let p = try? PropertyListSerialization.propertyList(from: d, format: nil) else { return nil }
+  func strip(_ v: Any) -> Any {
+    if let dict = v as? [String: Any] {
+      return dict.filter { $0.key != "LastUse" }.mapValues(strip)
+    }
+    if let arr = v as? [Any] { return arr.map(strip) }
+    return v
+  }
+  return strip(p) as? NSDictionary
 }

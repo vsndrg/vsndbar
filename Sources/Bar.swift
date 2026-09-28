@@ -24,8 +24,13 @@ final class BarModel: ObservableObject {
   /// false until the panel is first shown: the bar is laid out zero wide, then
   /// springs open (the islands fly in from the left edge)
   @Published var appeared = false
-  var hits: [String: CGRect] = [:] // "ws.N" | "input" | "battery" | "clock", view points from the top-left
+  var hits: [String: CGRect] = [:] // "ws.N" | "spaces" | "input" | "battery" | "clock", view points from the top-left
   let lens = Lens()
+  /// What the glass lies on: luminance per point column (backdropProfile), nil = unknown.
+  var backdrop: [Float]?
+  /// Islands over a light backdrop, drawn in the light appearance (dark text),
+  /// the others in the dark one — like the menu bar over the wallpaper.
+  @Published var light: Set<String> = []
 
   init(_ d: DisplayState) {
     did = d.did
@@ -35,6 +40,29 @@ final class BarModel: ObservableObject {
   /// The strip is the same islands scaled as a whole; gaps between islands stay `gap`.
   var scale: CGFloat { max(0.5, (display.strip - style.gap) / style.island) }
   var look: Look { Look(style: style, scale: scale) }
+
+  static let islands = ["spaces", "input", "battery", "clock"]
+
+  /// Each island's appearance from the mean luminance under it (the whole
+  /// strip's until the layout reports where it is). Two thresholds: an island
+  /// over a backdrop in between keeps what it has.
+  func retone() {
+    guard let p = backdrop, !p.isEmpty else { return }
+    var next = Set<String>()
+    for k in BarModel.islands {
+      let r = hits[k] ?? CGRect(x: 0, y: 0, width: CGFloat(p.count), height: 0)
+      let lo = max(0, min(p.count - 1, Int(r.minX))), hi = max(lo + 1, min(p.count, Int(r.maxX.rounded(.up))))
+      let l = p[lo..<hi].reduce(0, +) / Float(hi - lo)
+      if l > (light.contains(k) ? Config.lightOff : Config.lightOn) { next.insert(k) }
+    }
+    if next != light { withAnimation(Config.tone) { light = next } }
+  }
+}
+
+extension View {
+  /// The light or dark appearance for an island (BarModel.light): its glass
+  /// and the label colors inside.
+  func tone(_ light: Bool) -> some View { environment(\.colorScheme, light ? .light : .dark) }
 }
 
 /// What the islands are drawn with: the style at this display's scale. Views
@@ -68,7 +96,7 @@ final class Lens: ObservableObject {
   func follow(_ n: Int?) {
     guard let n, let r = cells[n] else { return }
     if lo == 0 && hi == 0 { lo = r.minX; hi = r.maxX; return }
-    if r.minX != lo || r.maxX != hi { withAnimation(.bouncy) { lo = r.minX; hi = r.maxX } }
+    if r.minX != lo || r.maxX != hi { withAnimation(Config.lens) { lo = r.minX; hi = r.maxX } }
   }
 }
 
@@ -126,7 +154,7 @@ struct SpaceCell: View, Equatable {
   }
 }
 
-/// The lens: its edges animate on the default .bouncy spring, clamped to the
+/// The lens: its edges animate on `Config.lens`, clamped to the
 /// island so an overshoot squashes it against the edge instead of leaving it.
 struct LensFrame: ViewModifier, Animatable {
   var lo: CGFloat, hi: CGFloat
@@ -150,8 +178,9 @@ struct WidthKey: PreferenceKey {
   static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// The selection: light glass, like the selected tab's platter in iOS 26.
-let lensGlass = Glass.regular.tint(.white.opacity(0.3)).interactive()
+/// The selection (Config.lensGlass), always interactive: see SpacesIsland.
+let lensGlass = Config.lensGlass.interactive()
+let lensGlassOther = Config.lensGlassOther.interactive()
 
 struct SpacesIsland: View {
   @ObservedObject var m: BarModel
@@ -189,17 +218,19 @@ struct SpacesIsland: View {
     .onChange(of: lensTarget) { lens.follow(lensTarget) }
     .background(alignment: .leading) {
       if lensTarget != nil {
-        // light glass on the focused display, plain on the others. Interactive:
+        // Config.lensGlass on the focused display, lensGlassOther elsewhere. Interactive:
         // a plain glass effect re-animates from its old place once the frame
         // animation ends (the lens snapped back and ran again)
         Color.clear
-          .glassEffect(m.display.focused ? lensGlass : .regular.interactive(), in: pill)
+          .glassEffect(m.display.focused ? lensGlass : lensGlassOther, in: pill)
           .modifier(LensFrame(lo: lens.lo, hi: lens.hi, maxX: rowW, height: st.pillH * s))
       }
     }
     .padding(st.inset * s)
     .frame(height: st.island * s)
-    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: st.radius * s, style: .continuous))
+    .glassEffect(Config.islandGlass, in: RoundedRectangle(cornerRadius: st.radius * s, style: .continuous))
+    .hit("spaces")
+    .tone(m.light.contains("spaces"))
   }
 }
 
@@ -226,21 +257,23 @@ func batteryImage(_ b: BatteryState, style: String, size: CGFloat, scale s: CGFl
 struct StatusIslands: View, Equatable {
   let status: StatusState
   let look: Look
+  let light: Set<String>
 
   func chip<C: View>(_ key: String, @ViewBuilder _ c: () -> C) -> some View {
     let s = look.scale
     return c()
       .padding(.horizontal, 10 * s)
       .frame(height: look.style.island * s)
-      .glassEffect(.regular, in: RoundedRectangle(cornerRadius: look.style.radius * s, style: .continuous))
+      .glassEffect(Config.islandGlass, in: RoundedRectangle(cornerRadius: look.style.radius * s, style: .continuous))
       .hit(key)
+      .tone(light.contains(key))
   }
 
   var body: some View {
     let s = look.scale, st = look.style
     HStack(spacing: st.gap) {
       chip("input") {
-        Text(status.input).font(look.font(true)).foregroundStyle(.secondary)
+        Text(status.input).font(look.font(true)).foregroundStyle(.primary)
           .frame(minWidth: 18 * s)
       }
       if let b = status.battery {
@@ -251,7 +284,7 @@ struct StatusIslands: View, Equatable {
       }
       chip("clock") {
         HStack(spacing: 6 * s) {
-          Text(status.date).font(look.font(true)).foregroundStyle(.secondary)
+          Text(status.date).font(look.font(true)).foregroundStyle(.primary)
           Text(status.time).font(look.font(true)).monospacedDigit().foregroundStyle(.primary)
         }
       }
@@ -266,7 +299,7 @@ struct BarView: View {
     HStack(alignment: .top, spacing: 0) {
       SpacesIsland(m: m, lens: m.lens)
       Spacer(minLength: 0)
-      StatusIslands(status: m.status, look: m.look).equatable()
+      StatusIslands(status: m.status, look: m.look, light: m.light).equatable()
     }
     .padding(.horizontal, m.style.gap)
     .padding(.top, m.style.gap)
@@ -275,7 +308,10 @@ struct BarView: View {
     // fully transparent pixels would let clicks through to the desktop
     .background(Color.black.opacity(0.002))
     .coordinateSpace(name: "bar")
-    .onPreferenceChange(HitKey.self) { m.hits = $0 }
+    .onPreferenceChange(HitKey.self) {
+      m.hits = $0
+      m.retone()
+    }
     .frame(width: m.appeared ? nil : 0)
     .frame(maxWidth: .infinity, alignment: .leading)
   }
@@ -288,8 +324,6 @@ struct BarView: View {
 class TrackingHost<V: View>: NSHostingView<V> {
   var onMove: ((CGPoint?) -> Void)?
   var onClick: ((CGPoint, Bool) -> Void)? // point, right button
-  var onPress: ((CGPoint) -> Void)?       // left button down (the click is on up)
-  var onDrag: ((CGPoint) -> Void)?
 
   required init(rootView: V) { super.init(rootView: rootView) }
   @MainActor required dynamic init?(coder: NSCoder) { fatalError() }
@@ -309,8 +343,7 @@ class TrackingHost<V: View>: NSHostingView<V> {
   override func mouseMoved(with e: NSEvent) { onMove?(point(e)) }
   override func mouseEntered(with e: NSEvent) { onMove?(point(e)) }
   override func mouseExited(with e: NSEvent) { onMove?(nil) }
-  override func mouseDown(with e: NSEvent) { onPress?(point(e)) }
-  override func mouseDragged(with e: NSEvent) { onDrag?(point(e)) }
+  override func mouseDown(with e: NSEvent) {} // the click is on up
   override func mouseUp(with e: NSEvent) { onClick?(point(e), false) }
   override func rightMouseDown(with e: NSEvent) { onClick?(point(e), true) }
 }
@@ -347,8 +380,11 @@ final class MenuModel: ObservableObject {
   @Published var style = BarStyle()
   @Published var scale: CGFloat = 1
   @Published var hover: String?
-  @Published var open = false // the glass is in (inserted / removed on .bouncy)
+  @Published var open = false // the glass is in (inserted / removed on Config.popup)
   var hits: [String: CGRect] = [:]
+  /// the slider moved to a value / was released (GlassMenu)
+  var slide: ((CGFloat) -> Void)?
+  var slideEnded: (() -> Void)?
 }
 
 struct MenuView: View {
@@ -369,7 +405,7 @@ struct MenuView: View {
       ForEach(items, id: \.self) { item in
         let id = "\(kind).\(item)"
         Text(item).font(Font(nsFont(st.family, face(item), st.size * s) as CTFont))
-          .foregroundStyle(item == selected ? .primary : .secondary)
+          .foregroundStyle(.primary)
           .frame(width: w, height: 24 * s)
           .background {
             if live && id == m.hover && item != selected {
@@ -380,27 +416,27 @@ struct MenuView: View {
       }
     }
     .background(alignment: .leading) {
-      // the bar's lens: interactive glass, its frame animated on .bouncy
+      // the bar's lens: interactive glass, its frame animated on Config.lens
       if live, let i {
         let lo = CGFloat(i) * (w + gap)
         Color.clear.glassEffect(lensGlass, in: pill)
           .modifier(LensFrame(lo: lo, hi: lo + w, maxX: .infinity, height: 24 * s))
-          .animation(.bouncy, value: i)
+          .animation(Config.lens, value: i)
       }
     }
   }
 
-  /// The system slider, drawn only: the daemon's windows take the mouse
-  /// themselves (GlassMenu.drag); its frame is the "corner" hit.
+  /// The system slider, tracking the mouse itself (so it shows its own
+  /// pressed glass knob); values go to GlassMenu. Its frame is the "corner" hit.
   func slider(live: Bool) -> some View {
     let s = m.scale, st = m.style
+    let value = Binding(get: { Double(st.corner) }, set: { m.slide?(CGFloat($0)) })
     return HStack(spacing: 8 * s) {
-      Image(systemName: "square").foregroundStyle(.secondary)
-      Slider(value: .constant(Double(st.corner)), in: 0...Double(max(st.cornerMax, 1)))
-        .tint(.secondary)
-        .allowsHitTesting(false)
+      Image(systemName: "square").foregroundStyle(.primary)
+      Slider(value: value, in: 0...Double(max(st.cornerMax, 1))) { if !$0 { m.slideEnded?() } }
+        .tint(.primary)
         .hit(live ? "corner" : "")
-      Image(systemName: "capsule").foregroundStyle(.secondary)
+      Image(systemName: "capsule").foregroundStyle(.primary)
     }
     .font(.system(size: st.size * s))
     .padding(.horizontal, 8 * s)
@@ -424,7 +460,7 @@ struct MenuView: View {
       GlassEffectContainer {
         if m.open {
           rows(live: true)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .glassEffect(Config.popupGlass, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .glassEffectTransition(.materialize)
         }
       }
@@ -440,14 +476,11 @@ struct MenuView: View {
 /// transparent pixels let clicks through.
 let popupMargin: CGFloat = 20
 
-/// Width of the system slider's knob (measured on macOS 26).
-let sliderKnob: CGFloat = 22
-
-/// Inserts / removes a popup's glass on .bouncy; the panel stays ordered in
+/// Inserts / removes a popup's glass on Config.popup; the panel stays ordered in
 /// until the glass is gone.
 func popupGlass(_ open: Bool, set: @escaping (Bool) -> Void, removed: @escaping () -> Void) {
-  if open { withAnimation(.bouncy) { set(true) }; return }
-  withAnimation(.bouncy, completionCriteria: .removed) { set(false) } completion: { removed() }
+  if open { withAnimation(Config.popup) { set(true) }; return }
+  withAnimation(Config.popup, completionCriteria: .removed) { set(false) } completion: { removed() }
 }
 
 final class GlassMenu {
@@ -456,8 +489,6 @@ final class GlassMenu {
     let h = TrackingHost(rootView: MenuView(m: model))
     h.onMove = { [weak self] p in self?.hover(p) }
     h.onClick = { [weak self] p, right in if !right { self?.click(p) } }
-    h.onPress = { [weak self] p in self?.press(p) }
-    h.onDrag = { [weak self] p in self?.drag(p) }
     return h
   }()
   lazy var panel: NSPanel = {
@@ -477,6 +508,11 @@ final class GlassMenu {
   var onPreview: ((CGFloat) -> Void)?
   /// weight.<Weight> | corner.<radius>
   var onSelect: ((String) -> Void)?
+
+  init() {
+    model.slide = { [weak self] v in self?.slide(v) }
+    model.slideEnded = { [weak self] in self?.slideEnded() }
+  }
 
   func place(on sc: NSScreen, style: BarStyle, strip: CGFloat) {
     model.style = style
@@ -570,38 +606,31 @@ final class GlassMenu {
 
   func hover(_ p: CGPoint?) {
     let id = hit(p)
-    if id != model.hover { withAnimation(.smooth(duration: 0.2)) { model.hover = id } }
+    if id != model.hover { withAnimation(Config.hover) { model.hover = id } }
   }
 
   func click(_ p: CGPoint) {
-    if dragging {
-      dragging = false
-      clicked = Date()
-      onSelect?("corner.\(model.style.corner)")
-      return
-    }
     guard let id = hit(p), id != "corner" else { return }
     clicked = Date()
     onSelect?(id)
   }
 
-  func press(_ p: CGPoint) {
-    guard hit(p) == "corner" else { return }
+  /// The slider moved (in quarter points)
+  func slide(_ v: CGFloat) {
+    guard isOpen else { return }
     dragging = true
-    drag(p)
-  }
-
-  /// x → value along the slider's track (the knob's center travels between
-  /// knob / 2 from each end)
-  func drag(_ p: CGPoint) {
-    guard dragging, let f = model.hits["corner"] else { return }
     clicked = Date()
-    let knob = sliderKnob * model.scale, st = model.style
-    let t = min(1, max(0, (p.x - f.minX - knob / 2) / max(1, f.width - knob)))
-    let v = (t * st.cornerMax * 4).rounded() / 4
-    guard v != st.corner else { return }
+    let v = min(model.style.cornerMax, max(0, (v * 4).rounded() / 4))
+    guard v != model.style.corner else { return }
     model.style.corner = v
     onPreview?(v)
+  }
+
+  func slideEnded() {
+    guard dragging else { return }
+    dragging = false
+    clicked = Date()
+    onSelect?("corner.\(model.style.corner)")
   }
 }
 
@@ -619,7 +648,7 @@ struct TipView: View {
   var label: some View {
     let s = m.scale
     return Text(m.text).font(Font(nsFont(m.style.family, m.style.secondary, m.style.size * s) as CTFont))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(.primary)
       .padding(.horizontal, 10 * s)
       .frame(height: m.style.island * s)
   }
@@ -631,7 +660,7 @@ struct TipView: View {
       GlassEffectContainer {
         if m.open {
           label
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: m.style.radius * m.scale, style: .continuous))
+            .glassEffect(Config.popupGlass, in: RoundedRectangle(cornerRadius: m.style.radius * m.scale, style: .continuous))
             .glassEffectTransition(.materialize)
         }
       }
@@ -770,13 +799,14 @@ final class GlassBar {
         if m.style != new.style { m.style = new.style }
         if m.display != d { m.display = d }
         if m.status != new.status { m.status = new.status }
-        if cellsStay { m.lens.target(d.spaces.first { $0.shown }?.n) }
+        if cellsStay { withAnimation(Config.lens) { m.lens.target(d.spaces.first { $0.shown }?.n) } }
       }
-      if moved { withAnimation(.bouncy, update) } else { update() }
+      if moved { withAnimation(Config.layout, update) } else { update() }
       if new.hidden { p.orderOut(nil) } else if !p.isVisible { p.orderFrontRegardless() }
       if p.isVisible && !m.appeared {
+        sampleBackdrop(only: d.did, why: "bar opens")
         p.contentView?.layoutSubtreeIfNeeded() // the zero-wide layout to spring from
-        withAnimation(.bouncy) { m.appeared = true }
+        withAnimation(Config.appear) { m.appeared = true }
       }
     }
     for (did, p) in panels where !seen.contains(did) {
@@ -826,7 +856,7 @@ final class GlassBar {
   func hover(_ did: CGDirectDisplayID, _ p: CGPoint?) {
     guard let m = models[did] else { return }
     let n = p.flatMap { workspace(m, at: $0) }
-    if n != m.hover { withAnimation(.smooth(duration: 0.2)) { m.hover = n } }
+    if n != m.hover { withAnimation(Config.hover) { m.hover = n } }
     let onBattery = p.map { m.hits["battery"]?.contains($0) ?? false } ?? false
     if onBattery { showTip(on: did) } else if tipOn == did { tipOn = 0; tip.hide() }
   }
@@ -859,10 +889,24 @@ final class GlassBar {
     }
   }
 
+  /// Reads what lies under each shown bar (the wallpaper) and re-picks the
+  /// islands' appearance. A display's first read happens as its bar opens.
+  /// Every read is logged (backdrop.log): it may light the screen capture dot.
+  func sampleBackdrop(only did: CGDirectDisplayID? = nil, why: String) {
+    for (d, p) in panels where p.isVisible && (did == nil || did == d) {
+      sleepLogLine("display \(d): \(why)", to: Config.state + "/backdrop.log")
+      guard let m = models[d],
+            let prof = backdropProfile(d, below: CGWindowID(p.windowNumber), height: m.display.strip) else { continue }
+      m.backdrop = prof
+      m.retone()
+    }
+  }
+
   /// System icon theme changed: icons are re-read from NSWorkspace.
   func iconsChanged() {
     iconCache.removeAll()
     for m in models.values { m.iconEpoch += 1 }
   }
 }
+
 

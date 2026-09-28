@@ -5,7 +5,7 @@
 //   vsndbar daemon     the bar: Liquid Glass windows over the notch strip of every display,
 //                      workspaces from AeroSpace, layout │ battery │ clock; masks the built-in
 //                      display's bottom corners; reconnects Sidecar after wake
-//   vsndbar toggle     hide / show the bar (cmd-shift-b in aerospace.toml)
+//   vsndbar toggle     the bar ⇄ the system menu bar (cmd-shift-b in aerospace.toml)
 //   vsndbar layout [next]   print / switch keyboard layout
 //   vsndbar screens    per display: "<NSScreen index, 1-based> <CGDirectDisplayID> <menu bar height> <kind>"
 //   vsndbar sleep      end Sidecar sessions, then sleep the system (F6 in Karabiner;

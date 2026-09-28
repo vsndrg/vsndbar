@@ -7,10 +7,10 @@ import IOKit.pwr_mgt
 let sleepLog = NSHomeDirectory() + "/.local/state/vsndbar/sleep.log"
 
 /// Appends (the daemon and F6 both write here); past 256 KB keeps the newest half.
-func sleepLogLine(_ s: String) {
+func sleepLogLine(_ s: String, to log: String = sleepLog) {
   let fm = FileManager.default
-  if !fm.fileExists(atPath: sleepLog) { fm.createFile(atPath: sleepLog, contents: nil) }
-  guard let h = FileHandle(forUpdatingAtPath: sleepLog) else { return }
+  if !fm.fileExists(atPath: log) { fm.createFile(atPath: log, contents: nil) }
+  guard let h = FileHandle(forUpdatingAtPath: log) else { return }
   defer { h.closeFile() }
   let size = h.seekToEndOfFile()
   if size > 256 << 10 {
