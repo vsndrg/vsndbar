@@ -131,6 +131,21 @@ AeroSpace:
 - Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
   hover `.smooth(0.2)`), applied by `make install`.
+- Strip blur (user asked: "like Control Center", then "weaker, smoother, a bit lower"): its own panel per display
+  (`blurs`, level backstopMenu − 1, ignoresMouseEvents) from the top down to `Config.blurBelow` 36pt under the
+  strip (under windows it is hidden anyway). `BlurView` = private CABackdropLayer (windowServerAware) + CAFilter
+  `variableBlur`, radius (user tuned by hand, 10/6/4 read too strong) `Config.blurRadius` 1 at the strip's bottom, linearly to
+  `blurRadiusTop` 2 at the islands' top (user: "1 → 1.5 → 2", symmetric about the islands), held above; × smoothstep² over the blurBelow
+  band under it (a blur looks strong until its radius is small; linear fade read as a band; a fade across the
+  strip put the visible edge mid-island: user "несимметрично"; 10pt band read abrupt). Mask in layer points UNSTRETCHED (a 1px column
+  only covered x 0–1): full-size RGBA, alpha = share of the radius, rows top-down. Islands' glass refracts it;
+  backdropProfile reads below the blur panel (wallpaper only). User: "мутный" vs Control Center → system
+  materials (dumped NSVisualEffectView layers) = sdrNormalize, gaussianBlur 30, colorSaturate 1.6–2.4, scale
+  0.125: a blur averages colors into grey, saturation wins them back → `colorSaturate` `Config.blurSaturation`
+  after the blur, faded out with it by a gradient mask on the backdrop layer over blurBelow. 1.8 read
+  "неестественно": Control Center is Liquid Glass (dumped NSGlassEffectView: `glassBackground` filter, regular =
+  blur 5 + face color matrix sat 1.3 / white 1.125 / black 0.08, clear = blur 7.2, sat 1, white 0.8, black
+  0.05, scale 0.5) → radius 4, saturation 1.3.
 - Glass kinds too: `islandGlass` .clear + 15% black, `popupGlass` .regular (matte: the theme menu lies over
   windows), `lensGlass` .clear + 10% white, `lensGlassOther` .clear + 15% black; lenses made `.interactive()`
   in code.
@@ -153,6 +168,11 @@ Generic: no hardcoded monitor names/sizes. Typical use: iPad (Sidecar) for Zoom/
 - Frame probe: lens frame times recorded in `LensFrame.body` (probe build only), gaps > 1.5 periods at
   120 Hz = drops. Noisy run to run (±2%): compare several runs. Over half the recorded frames are the
   spring's sub-pixel tail (< 2 pt/s); drops there are invisible.
+- bench.sh sends SIGUSR1 (probe dump): the regular build dies on it → run it against the probe build only.
+  WindowServer's rusage is not readable (410 ERR); `ps -o cputime=` of it works.
+- Strip blur cost (2026-09-29, blur on vs blurRadius 0, alternating ×2, idle 60s + 20 switches): bar process
+  same (switch 390–399 vs 384–390 mJ), WindowServer CPU +2–3% (idle ~7.2 vs ~7.0 s/min, switch 4.1 vs 4.0 s;
+  noisy). WindowServer GPU not measurable without sudo (powermetrics).
 - Visual check: `screencapture -x -R x,y,w,h` / `-v`; diff with PIL/numpy (venv in the scratchpad). Judge
   glass over the wallpaper, not over windows. Real mouse: post `CGEvent`s (small Swift scripts).
 

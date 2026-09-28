@@ -347,6 +347,101 @@ struct BarView: View {
   }
 }
 
+/// The strip's blur (Config.blurRadius), the content of its own window under
+/// the bar's: WindowServer blurs what lies behind it, like Control Center's
+/// backdrop and the soft scroll edge. Private Core Animation: a
+/// CABackdropLayer with the variableBlur filter, its radius scaled by a mask
+/// (full at the top, easing to zero at the bottom edge). If the classes are
+/// ever gone the strip just stays clear.
+final class BlurView: NSView {
+  let backdrop: CALayer?
+  let blur: NSObject?
+  let saturate: NSObject?
+  /// the saturation eases out with the radius: the whole effect fades to what is behind
+  let fade = CAGradientLayer()
+  var maskSize = CGSize.zero
+
+  static var maxRadius: CGFloat { max(Config.blurRadius, Config.blurRadiusTop) }
+
+  static func filter(_ type: String) -> NSObject? {
+    (NSClassFromString("CAFilter") as? NSObject.Type)?
+      .perform(NSSelectorFromString("filterWithType:"), with: type)?.takeUnretainedValue() as? NSObject
+  }
+
+  init() {
+    backdrop = (NSClassFromString("CABackdropLayer") as? CALayer.Type)?.init()
+    blur = BlurView.filter("variableBlur")
+    saturate = Config.blurSaturation != 1 ? BlurView.filter("colorSaturate") : nil
+    super.init(frame: .zero)
+    wantsLayer = true
+    guard let backdrop, let blur else { return }
+    backdrop.setValue(true, forKey: "windowServerAware") // what is behind the window, not just in it
+    blur.setValue(BlurView.maxRadius, forKey: "inputRadius") // the mask's 1
+    blur.setValue(true, forKey: "inputNormalizeEdges")
+    saturate?.setValue(Config.blurSaturation, forKey: "inputAmount")
+    backdrop.filters = [blur] + (saturate.map { [$0] } ?? [])
+    if saturate != nil { backdrop.mask = fade }
+    layer?.addSublayer(backdrop)
+  }
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func setFrameSize(_ size: NSSize) {
+    super.setFrameSize(size)
+    fit()
+  }
+
+  func fit() {
+    guard let backdrop, let blur else { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    backdrop.frame = bounds
+    if bounds.size != maskSize {
+      maskSize = bounds.size
+      blur.setValue(blurMask(bounds.size), forKey: "inputMaskImage")
+      backdrop.filters = [blur] + (saturate.map { [$0] } ?? [])
+      // opaque over the strip, clear at the bottom (layer y is up: 0 = bottom)
+      let h = max(1, bounds.height)
+      fade.frame = bounds
+      fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
+      fade.startPoint = CGPoint(x: 0.5, y: 0)
+      fade.endPoint = CGPoint(x: 0.5, y: min(1, Config.blurBelow / h))
+    }
+    CATransaction.commit()
+  }
+
+  /// The filter takes the mask in the layer's points, unstretched: one pixel
+  /// per point, rows from the top, alpha = the share of maxRadius. Over the
+  /// islands the radius goes evenly from blurRadiusTop (their top edge, held
+  /// above) to blurRadius (their bottom edge, the strip's), symmetric about
+  /// their middle; under the strip it eases out over Config.blurBelow
+  /// (smoothstep, squared: a blur looks about as strong until its radius is
+  /// small, so it drops early).
+  func blurMask(_ size: CGSize) -> CGImage? {
+    let w = max(1, Int(size.width.rounded(.up))), h = max(1, Int(size.height.rounded(.up)))
+    var px = [UInt8](repeating: 0, count: w * h * 4)
+    let strip = size.height - Config.blurBelow, islandTop = min(Config.gap, strip)
+    for y in 0..<h {
+      let p = CGFloat(y) + 0.5
+      let r: CGFloat
+      if p > strip {
+        let t = min(1, max(0, (size.height - p) / Config.blurBelow)) // 1 at the strip, 0 at the bottom
+        let e = t * t * (3 - 2 * t)
+        r = Config.blurRadius * e * e
+      } else {
+        let u = min(1, max(0, (strip - p) / max(1, strip - islandTop))) // 0 at the islands' bottom, 1 at their top
+        r = Config.blurRadius + (Config.blurRadiusTop - Config.blurRadius) * u
+      }
+      let v = UInt8((min(1, r / max(BlurView.maxRadius, 0.01)) * 255).rounded())
+      for i in stride(from: y * w * 4, to: (y + 1) * w * 4, by: 1) { px[i] = v }
+    }
+    guard let data = CGDataProvider(data: Data(px) as CFData) else { return nil }
+    return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                   space: CGColorSpaceCreateDeviceRGB(),
+                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                   provider: data, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+  }
+}
+
 // MARK: - Windows
 
 /// Mouse handling for a daemon window: the daemon's app is never active, so
@@ -805,6 +900,8 @@ final class GlassBar {
   var state = BarState()
   var models: [CGDirectDisplayID: BarModel] = [:]
   var panels: [CGDirectDisplayID: NSPanel] = [:]
+  /// the strip blur's windows, right under the bars' (Config.blurRadius)
+  var blurs: [CGDirectDisplayID: NSPanel] = [:]
   let menu = GlassMenu()
   let battery = BatteryMenu()
   var warmed = false
@@ -873,6 +970,13 @@ final class GlassBar {
       // the right islands spring to a new layout, a bolt, a new date; the
       // minute tick alone stays unanimated (no frames once a minute)
       if statusMoves { withAnimation(Config.layout) { m.status = new.status } }
+      if Config.blurRadius > 0 {
+        let b = blurs[d.did] ?? makeBlur(d.did)
+        let bf = NSRect(x: frame.minX, y: frame.minY - Config.blurBelow, width: frame.width,
+                        height: frame.height + Config.blurBelow)
+        if b.frame != bf { b.setFrame(bf, display: true) }
+        if new.hidden { b.orderOut(nil) } else if !b.isVisible { b.orderFrontRegardless() }
+      }
       if new.hidden { p.orderOut(nil) } else if !p.isVisible { p.orderFrontRegardless() }
       if p.isVisible && !m.appeared {
         sampleBackdrop(only: d.did, why: "bar opens")
@@ -882,7 +986,9 @@ final class GlassBar {
     }
     for (did, p) in panels where !seen.contains(did) {
       p.orderOut(nil)
+      blurs[did]?.orderOut(nil)
       panels[did] = nil
+      blurs[did] = nil
       models[did] = nil
     }
     if new.hidden {
@@ -910,6 +1016,15 @@ final class GlassBar {
     h.onMove = { [weak self] pt in self?.hover(did, pt) }
     h.onClick = { [weak self] pt, right in self?.click(did, pt, right: right) }
     p.contentView = h
+    return p
+  }
+
+  /// One level under the bar's (nothing else lives there), never takes the mouse.
+  func makeBlur(_ did: CGDirectDisplayID) -> NSPanel {
+    let p = barPanel(level: NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.backstopMenu)) - 1))
+    p.ignoresMouseEvents = true
+    p.contentView = BlurView()
+    blurs[did] = p
     return p
   }
 
@@ -958,7 +1073,7 @@ final class GlassBar {
     for (d, p) in panels where p.isVisible && (did == nil || did == d) {
       sleepLogLine("display \(d): \(why)", to: Config.state + "/backdrop.log")
       guard let m = models[d],
-            let prof = backdropProfile(d, below: CGWindowID(p.windowNumber), height: m.display.strip) else { continue }
+            let prof = backdropProfile(d, below: CGWindowID((blurs[d] ?? p).windowNumber), height: m.display.strip) else { continue }
       m.backdrop = prof
       m.retone()
     }

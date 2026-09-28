@@ -114,6 +114,21 @@ enum Config {
   /// The subdued lens on the workspace a display shows while focus is on another.
   static let lensGlassOther: Glass = .clear
 
+  /// The strip's backdrop: what lies under the bar (the wallpaper) blurred,
+  /// like Control Center's, so the islands' glass refracts a blur. The radius
+  /// (points; 0 = off) at the islands' bottom edge (the strip's), growing
+  /// evenly to `blurRadiusTop` at their top edge (the mean in their middle),
+  /// held above; under the strip it eases to none over `blurBelow` points
+  /// (its own window, clicks pass through).
+  static let blurRadius: CGFloat = 1
+  static let blurRadiusTop: CGFloat = 2
+  static let blurBelow: CGFloat = 42
+  /// Saturation after the blur (1 = off): a blur averages colors into grey,
+  /// Apple's win them back. Liquid Glass (Control Center): regular 1.3 at
+  /// radius 5, clear 1 at 7.2; the old materials (menu 2.2, HUD 1.6, radius
+  /// 30) look unnatural at a small radius.
+  static let blurSaturation: CGFloat = 1.3
+
   static let state = NSHomeDirectory() + "/.local/state/vsndbar"
   /// the sketchybar bar's state dir: the theme is carried over from it once
   static let legacyState = NSHomeDirectory() + "/.local/state/sketchybar"
