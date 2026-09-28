@@ -20,16 +20,16 @@ enum Config {
   /// curve reaches ~1.53 r along each edge). 0 = off.
   static let screenCorner: CGFloat = 21
 
-  /// Corner radius: one number for islands and the tooltip (the menu keeps the
-  /// system menu radius), set with the slider in the right-click menu (Theme
-  /// keeps it), from 0 to the built-in panel's own radius. Each shape takes
-  /// min(radius, its height / 2): the island caps at a capsule (13). Default
-  /// h / (2 * 1.528): the largest radius at which Apple's continuous corner
-  /// still fits the island unclamped.
-  static let cornerDefault: CGFloat = (island / (2 * 1.528) * 4 + 0.5).rounded(.down) / 4
+  /// Corner radius of the islands: one number (the theme menu keeps the
+  /// system menu radius), 0 to `cornerMax`. Each shape takes min(radius, its
+  /// height / 2): the island caps at a capsule (13); up to 8.5 Apple's
+  /// continuous corner still fits the island unclamped (it reaches ~1.53 r
+  /// along each edge). With the theme menu on, its slider sets it instead
+  /// (Theme keeps the pick) and this is only the default.
+  static let corner: CGFloat = 10.5
   static let cornerMax: CGFloat = screenCorner
 
-  /// Popups (battery tooltip, theme menu) float this far below the islands;
+  /// Popups (theme menu, battery menu) float this far below the islands;
   /// height: a one-row popup (a theme menu row with its padding); radius: the
   /// theme menu's, macOS 26's own menu radius (NSPopupMenuWindow reports 12;
   /// SwiftUI has no default for it: plain glass is a capsule, a
@@ -40,14 +40,23 @@ enum Config {
 
   /// Text weight, picked in the right-click menu (Theme keeps the choice):
   /// primary text (workspace digits, date and time, layout, battery level) in
-  /// it, secondary (tooltip, menu) one step lighter.
+  /// it, secondary (theme menu) one step lighter.
   static let family = "SF Pro Text"
   static let weights = ["Regular", "Medium", "Semibold"]
   static let lighter = ["Regular": "Light", "Medium": "Regular", "Semibold": "Medium"]
   static let weightDefault = "Medium"
   static let textSize: CGFloat = 12.5
-  /// the level inside the battery glyph
-  static let batteryText: CGFloat = 10
+  /// the level inside the battery glyph: knocked out of the body, so it
+  /// reads thinner than text of the same weight — drawn heavier
+  static let batteryText: CGFloat = 11
+  /// the battery body past the level (and the nub until full), like the
+  /// system's: this much of the full color
+  static let batteryTrack: CGFloat = 0.4
+  static let batteryWeight = "Semibold"
+
+  /// The right-click theme menu (text weight, corner radius). Off: the bar
+  /// keeps the last picks (~/.local/state/vsndbar/theme); the code stays.
+  static let themeMenu = false
 
   /// Low battery (red) at or below this level, off the charger.
   static let batteryLow = 20
@@ -65,23 +74,29 @@ enum Config {
   /// A spring keeps its speed when it is retargeted mid-flight (quick cmd-N
   /// presses), a curve restarts from rest.
   /// The selection lens (workspaces, theme menu picks).
-  static let lens: Animation? = .snappy.speed(2)
+  static let lens: Animation? = .bouncy.speed(2)
   /// Everything else a workspace switch changes: islands growing / shrinking,
   /// cells appearing / leaving, icons, text.
-  static let layout: Animation? = .snappy.speed(2)
+  static let layout: Animation? = .bouncy.speed(2)
   /// The bar springing open (daemon start, a new display).
-  static let appear: Animation? = .snappy.speed(2)
-  /// The theme menu and the battery tooltip coming in / going out.
-  static let popup: Animation? = .snappy.speed(2)
+  static let appear: Animation? = .bouncy.speed(2)
+  /// The theme menu coming in / going out.
+  static let popup: Animation? = .bouncy.speed(2)
   /// The hover fill following the mouse.
   static let hover: Animation? = .smooth(duration: 0.2)
+  /// A display gaining / losing focus: its bar's text and icons brightening / dimming.
+  static let focus: Animation? = .smooth(duration: 0.25)
   /// An island switching between the dark and the light appearance.
-  static let tone: Animation? = .smooth(duration: 0.3)
+  static let tone: Animation? = .smooth(duration: 0.1)
 
   /// Backdrop luminance (relative, 0…1: linear light, 0.18 ≈ mid grey) above
   /// which an island turns light (dark text), and below which it turns back.
   static let lightOn: Float = 0.3
   static let lightOff: Float = 0.2
+
+  /// Text and icons on the bars of displays without focus, like the menu bar
+  /// of an inactive display: this much of their opacity (the glass stays).
+  static let dimmed: Double = 0.45
 
   /// Liquid Glass (SwiftUI `Glass`; `make install` to apply): .regular (the
   /// system default), .clear (more see-through: for busy wallpapers, needs
@@ -89,15 +104,15 @@ enum Config {
   /// .regular.tint(.white.opacity(0.3)), .clear.tint(.black.opacity(0.2))…
   /// The islands (workspaces, layout, battery, clock).
   static let islandGlass: Glass = .clear.tint(.black.opacity(0.15))
-  /// The theme menu and the battery tooltip: frosted (they lie over windows,
+  /// The theme menu: frosted (it lies over windows,
   /// text must read on anything).
   static let popupGlass: Glass = .regular
-  /// The selection lens on the focused display (and the theme menu's pick):
+  /// The selection lens on the focused workspace, on every bar (and the theme menu's pick):
   /// light glass, like the selected tab's platter in iOS 26. Made interactive
   /// in code (a moving lens needs it).
-  static let lensGlass: Glass = .clear.tint(.white.opacity(0.10))
-  /// The selection lens on the other displays.
-  static let lensGlassOther: Glass = .clear.tint(.black.opacity(0.15))
+  static let lensGlass: Glass = .clear.tint(.white.opacity(0.22))
+  /// The subdued lens on the workspace a display shows while focus is on another.
+  static let lensGlassOther: Glass = .clear
 
   static let state = NSHomeDirectory() + "/.local/state/vsndbar"
   /// the sketchybar bar's state dir: the theme is carried over from it once

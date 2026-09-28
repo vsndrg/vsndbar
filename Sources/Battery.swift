@@ -51,7 +51,7 @@ enum Battery {
     guard let src = IOPSNotificationCreateRunLoopSource({ ctx in
       ctx.map { Unmanaged<Callback>.fromOpaque($0).takeUnretainedValue().fn() }
     }, box)?.takeRetainedValue() else { return }
-    CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
+    CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes) // also while a menu tracks (the battery menu)
     source = src
   }
 

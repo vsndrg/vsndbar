@@ -22,33 +22,25 @@ func nsFont(_ family: String, _ style: String, _ size: CGFloat) -> NSFont {
   return f
 }
 
-/// Battery: a solid squircle body, all of it opaque (legible on the clear
-/// glass; the level reads from the number), the level knocked out of it;
-/// optional bolt to the left.
+/// Battery, like the system's with the percentage inside: a squircle body
+/// filled from the left up to the level, the rest (and the nub, until full)
+/// at `Config.batteryTrack` opacity, the level knocked out of both. The bolt
+/// is its own image (drawBolt): it comes and goes with its own transition.
 let batteryHeight: CGFloat = 13
-func batteryWidth(_ state: Int) -> CGFloat { (state > 0 ? 9 : 0) + 28 + 1 + 2 }
-
-func drawBattery(_ ctx: CGContext, at origin: CGPoint, level: Int, state: Int, color: CGColor,
-                 style: String = "Bold", size: CGFloat = 10) {
+let batteryWidth: CGFloat = 28 + 1 + 2
+func drawBattery(_ ctx: CGContext, level: Int, color: CGColor, style: String = "Bold", size: CGFloat = 10) {
   let bw: CGFloat = 28, bh = batteryHeight, nub: CGFloat = 2, gap: CGFloat = 1
+  let track = color.copy(alpha: color.alpha * Config.batteryTrack) ?? color
   ctx.saveGState()
-  ctx.translateBy(x: origin.x, y: origin.y)
   ctx.beginTransparencyLayer(auxiliaryInfo: nil) // keeps the digit knock-out local
-  if state > 0 {
-    let b = CGMutablePath(), cy = bh / 2, cx: CGFloat = 3.5
-    b.move(to: CGPoint(x: cx + 1.2, y: cy + 5.6))
-    b.addLine(to: CGPoint(x: cx - 3.2, y: cy - 0.8))
-    b.addLine(to: CGPoint(x: cx - 0.2, y: cy - 0.8))
-    b.addLine(to: CGPoint(x: cx - 1.2, y: cy - 5.6))
-    b.addLine(to: CGPoint(x: cx + 3.2, y: cy + 0.8))
-    b.addLine(to: CGPoint(x: cx + 0.2, y: cy + 0.8))
-    b.closeSubpath()
-    ctx.addPath(b); ctx.setFillColor(color); ctx.fillPath()
-    ctx.translateBy(x: 9, y: 0)
-  }
   let body = CGRect(x: 0, y: 0, width: bw, height: bh)
-  ctx.setFillColor(color)
-  ctx.addPath(squircle(body, 4)); ctx.fillPath()
+  let fill = bw * CGFloat(min(max(level, 0), 100)) / 100
+  ctx.saveGState()
+  ctx.addPath(squircle(body, 4)); ctx.clip()
+  ctx.setFillColor(color); ctx.fill(CGRect(x: 0, y: 0, width: fill, height: bh))
+  ctx.setFillColor(track); ctx.fill(CGRect(x: fill, y: 0, width: bw - fill, height: bh))
+  ctx.restoreGState()
+  ctx.setFillColor(level >= 100 ? color : track)
   ctx.addPath(squircle(CGRect(x: bw + gap, y: bh / 2 - 2.25, width: nub, height: 4.5), 1)); ctx.fillPath()
 
   let f = nsFont(Config.family, style, size)
@@ -61,6 +53,20 @@ func drawBattery(_ ctx: CGContext, at origin: CGPoint, level: Int, state: Int, c
   ctx.textPosition = pos; CTLineDraw(line, ctx)
   ctx.endTransparencyLayer()
   ctx.restoreGState()
+}
+
+/// The charging bolt, left of the battery (batteryHeight tall).
+let boltWidth: CGFloat = 7
+func drawBolt(_ ctx: CGContext, color: CGColor) {
+  let b = CGMutablePath(), cy = batteryHeight / 2, cx: CGFloat = 3.5
+  b.move(to: CGPoint(x: cx + 1.2, y: cy + 5.6))
+  b.addLine(to: CGPoint(x: cx - 3.2, y: cy - 0.8))
+  b.addLine(to: CGPoint(x: cx - 0.2, y: cy - 0.8))
+  b.addLine(to: CGPoint(x: cx - 1.2, y: cy - 5.6))
+  b.addLine(to: CGPoint(x: cx + 3.2, y: cy + 0.8))
+  b.addLine(to: CGPoint(x: cx + 0.2, y: cy + 0.8))
+  b.closeSubpath()
+  ctx.addPath(b); ctx.setFillColor(color); ctx.fillPath()
 }
 
 var iconCache: [String: NSImage] = [:]

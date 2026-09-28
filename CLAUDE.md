@@ -52,7 +52,24 @@ Bar:
   morphs/drips → system `.bouncy` only.
 - Multi-display: `Display.mon` = NSScreen index = AeroSpace monitor id; windows keyed by CGDirectDisplayID,
   added/removed live, re-placed on didChangeScreenParameters. No restarts.
-- Popups (theme menu, battery tooltip): glass panels at popUpMenu level on the display under the mouse.
+- Theme menu is OFF (`Config.themeMenu = false`, user: keep only the battery popup; code kept, not deleted):
+  right click does nothing, the weight stays the last pick in the theme state (Regular); the island corner is `Config.corner`
+  (10.5; the theme file's corner is read only while the menu is on).
+- Battery island click → a real `NSMenu` (`BatteryMenu`, user: "like the system battery menu, use the ready-made
+  thing"; replaced the glass hover tooltip, deleted). The system's is Control Center's own (grey hover fill, 15pt
+  text inset); NSMenu has no such style (status-item association doesn't change it), so both items are VIEWS,
+  measured against the system menu at 2x and matched to the half pixel: from the menu top (AppKit adds 5pt above
+  the first item) header Semibold 13 at 16.5, grey lines 12pt `disabledControlTextColor` (= a disabled item's
+  color to the pixel) at 41.5 / 59.5, separator 1pt `separatorColor` at 78 inset 14, `MenuRow` Battery Settings…
+  fill 84–106 inset 7, `quaternaryLabelColor` (~10% white, = system), continuous r 10.5, text 6pt below its
+  top, menu bottom 7 below. The menu doesn't redraw view items on highlight → MenuRow tracks the mouse itself
+  (tracking area), view items need `autoresizingMask = .width` to span the menu. Menu corner stays NSMenu's 12
+  (system's is a bit larger). Placed G below the island, left edge on it or right edge G from the screen edge
+  (user: gaps symmetric); AppKit puts the FIRST ITEM at the popUp point → point = island bottom − G − 5. Charge
+  limit ("Will Stop Charging at 80%") and energy apps: no public API, left out. While a menu is open the main run
+  loop is in event tracking mode: every source/timer that feeds the bar must be in common modes (IOPS source was
+  .defaultMode → menu didn't update).
+- Theme menu popup: glass panel at popUpMenu level on the display under the mouse.
   Menu: text weight + corner radius slider; picks go straight to `Daemon.menuSelect`, the menu updates in
   place and stays open; closes on a click elsewhere / app activation (ignored right after a menu click:
   AeroSpace focuses the clicked display) — those monitors exist only while it is open. Slider = system
@@ -84,11 +101,15 @@ AeroSpace:
   the window. Bar h 32 = notch strip. Per display strip = min(32, its menu bar height) (built-in 33, iPad
   30); on a shorter strip the islands are scaled as a whole, gap kept at G. Windows start at 38 built-in /
   36 others, outer.bottom 5 (AeroSpace lays out 1pt short). aerospace.toml gaps must be changed by hand.
-- Islands: Liquid Glass (kind in `Config`), continuous corners. Corner radius = ONE number (menu slider
-  0…`screenCorner` 21, default 8.5, saved in the theme state) for islands + tooltip, each min(r, h/2).
+- Islands: Liquid Glass (kind in `Config`), continuous corners. Corner radius = ONE number (`Config.corner`,
+  0…`screenCorner` 21; with the theme menu on: its slider, saved in the theme state) for the islands, each min(r, h/2).
   Theme menu keeps the system menu radius 12.
-- Lens (selected workspace) h−6, inset 3: light glass (`lensGlass`) on the focused display,
-  `lensGlassOther` on the others; default `.bouncy`, clamped to the island. Hover: `.primary` fill 50%, same in menu.
+- Lens (the ws this display shows) h−6, inset 3: `lensGlass` (.clear + 22% white) on the focused
+  display, `lensGlassOther` (.clear) on the others; `.bouncy`, clamped to the island.
+- Focus between monitors = like macOS's per-display menu bars: on displays without focus all island
+  content (text, icons) is at `Config.dimmed` 45%, glass untouched; fades on `Config.focus`. Tried and
+  REJECTED by the user ("непонятно"): the bright lens following focus onto the other bar's
+  device-glyph cell + a subdued second lens on what the display shows. Hover: `.primary` fill 50%, same in menu.
 - No accent, no active-window border. Text/icons: system label colors.
 - Legibility follows the wallpaper like the menu bar: each island is in the light (dark text) or dark
   appearance by the mean luminance under it (`Config.lightOn/lightOff` 0.3/0.2). Read via the private
@@ -97,17 +118,20 @@ AeroSpace:
   open, display change, wallpaper change (watches `~/Library/Application Support/com.apple.wallpaper/Store`,
   ignores rewrites that only bump LastUse); every read logged to `backdrop.log`;
   NOT per minute (user: too costly) → dynamic/aerial wallpapers aren't followed. Status text, theme menu
-  items/slider and tooltip all `.primary` (user: no translucent text there).
+  items/slider all `.primary` (user: no translucent text there).
 - Built-in display bottom corners masked to match the top ones (`Corners`, `screenCorner` 21): static
   layer, hidden on native fullscreen Spaces, `sharingType = .none` (not in screenshots).
 - App icons follow the system icon theme: the daemon watches `~/Library/Preferences`; 5–10s lag accepted.
 - Text: SF Pro Text, weight from the menu (Regular/Medium/Semibold, secondary one step lighter). Date =
-  time weight, "Mon 28 Sep" (English). Battery: level knocked out of a fully opaque body + bolt (user: no translucency), template
-  image, red at ≤20% off AC; tooltip wording = macOS menu; updates as soon as IOKit reports (user OK'd).
+  time weight, "Mon 28 Sep" (English). Battery like the system's: body filled up to the level,
+  the rest at `Config.batteryTrack` 40% (user asked: 89% must not look full), level (11pt, `Config.batteryWeight`
+  Semibold: knocked-out text reads thin) knocked out of both; bolt = separate image with a scale+fade transition; template
+  image, red at ≤20% off AC; menu wording = macOS menu; updates as soon as IOKit reports (user OK'd).
+- Right islands animate (`Config.layout`) on any status change except the minute tick alone (no frames per minute).
 - Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
   hover `.smooth(0.2)`), applied by `make install`.
-- Glass kinds too: `islandGlass` .clear + 15% black, `popupGlass` .regular (matte: menu + tooltip lie over
+- Glass kinds too: `islandGlass` .clear + 15% black, `popupGlass` .regular (matte: the theme menu lies over
   windows), `lensGlass` .clear + 10% white, `lensGlassOther` .clear + 15% black; lenses made `.interactive()`
   in code.
 - Workspaces: every bar shows ALL existing workspaces (occupied or shown); ones living on another monitor

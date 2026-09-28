@@ -4,7 +4,7 @@
 //
 // The daemon (Daemon.swift) hands over the whole state; a change lands in one
 // SwiftUI transaction per window: islands, lens and text move together.
-// Clicks, hover, the theme menu and the battery tooltip are handled here.
+// Clicks, hover, the theme menu and the battery menu are handled here.
 
 import AppKit
 import SwiftUI
@@ -63,6 +63,13 @@ extension View {
   /// The light or dark appearance for an island (BarModel.light): its glass
   /// and the label colors inside.
   func tone(_ light: Bool) -> some View { environment(\.colorScheme, light ? .light : .dark) }
+
+  /// An island's content on a display without focus (Config.dimmed). Only the
+  /// opacity animates on Config.focus: a switch moving focus and cells at once
+  /// keeps its own animation for the cells.
+  func dim(_ on: Bool) -> some View {
+    animation(Config.focus) { $0.opacity(on ? Config.dimmed : 1) }
+  }
 }
 
 /// What the islands are drawn with: the style at this display's scale. Views
@@ -208,6 +215,7 @@ struct SpacesIsland: View {
           .transition(.opacity.combined(with: .scale(scale: 0.8)))
       }
     }
+    .dim(!m.display.focused)
     .coordinateSpace(name: "row")
     .background(GeometryReader { g in Color.clear.preference(key: WidthKey.self, value: g.size.width) })
     .onPreferenceChange(WidthKey.self) { rowW = $0 }
@@ -235,17 +243,16 @@ struct SpacesIsland: View {
 }
 
 var batteryCache: [String: NSImage] = [:]
-/// The battery glyph (main.swift drawBattery) as an image; a template (tinted
-/// like the text) unless low (red).
+/// The battery glyph (System.swift drawBattery) as an image; a template
+/// (tinted like the text) unless low (red).
 func batteryImage(_ b: BatteryState, style: String, size: CGFloat, scale s: CGFloat) -> NSImage {
-  let key = "\(b.level)|\(b.charge)|\(b.low)|\(style)|\(size)|\(s)"
+  let key = "\(b.level)|\(b.low)|\(style)|\(size)|\(s)"
   if let i = batteryCache[key] { return i }
-  let w = batteryWidth(b.charge), h = batteryHeight
-  let img = NSImage(size: NSSize(width: w * s, height: h * s), flipped: false) { _ in
+  let img = NSImage(size: NSSize(width: batteryWidth * s, height: batteryHeight * s), flipped: false) { _ in
     guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
     ctx.scaleBy(x: s, y: s)
     let c = b.low ? NSColor.systemRed.cgColor : NSColor.black.cgColor
-    drawBattery(ctx, at: .zero, level: b.level, state: b.charge, color: c, style: style, size: size)
+    drawBattery(ctx, level: b.level, color: c, style: style, size: size)
     return true
   }
   img.isTemplate = !b.low
@@ -254,14 +261,31 @@ func batteryImage(_ b: BatteryState, style: String, size: CGFloat, scale s: CGFl
   return img
 }
 
+/// The charging bolt (System.swift drawBolt) as a template image.
+func boltImage(scale s: CGFloat) -> NSImage {
+  let key = "bolt|\(s)"
+  if let i = batteryCache[key] { return i }
+  let img = NSImage(size: NSSize(width: boltWidth * s, height: batteryHeight * s), flipped: false) { _ in
+    guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+    ctx.scaleBy(x: s, y: s)
+    drawBolt(ctx, color: NSColor.black.cgColor)
+    return true
+  }
+  img.isTemplate = true
+  batteryCache[key] = img
+  return img
+}
+
 struct StatusIslands: View, Equatable {
   let status: StatusState
   let look: Look
   let light: Set<String>
+  let dim: Bool
 
   func chip<C: View>(_ key: String, @ViewBuilder _ c: () -> C) -> some View {
     let s = look.scale
     return c()
+      .dim(dim)
       .padding(.horizontal, 10 * s)
       .frame(height: look.style.island * s)
       .glassEffect(Config.islandGlass, in: RoundedRectangle(cornerRadius: look.style.radius * s, style: .continuous))
@@ -278,8 +302,14 @@ struct StatusIslands: View, Equatable {
       }
       if let b = status.battery {
         chip("battery") {
-          Image(nsImage: batteryImage(b, style: st.primary, size: st.battery, scale: s))
-            .foregroundStyle(.primary)
+          HStack(spacing: 2 * s) {
+            if b.charge > 0 {
+              Image(nsImage: boltImage(scale: s)).foregroundStyle(.primary)
+                .transition(.scale(scale: 0.3).combined(with: .opacity))
+            }
+            Image(nsImage: batteryImage(b, style: st.batteryWeight, size: st.battery, scale: s))
+              .foregroundStyle(.primary)
+          }
         }
       }
       chip("clock") {
@@ -299,12 +329,12 @@ struct BarView: View {
     HStack(alignment: .top, spacing: 0) {
       SpacesIsland(m: m, lens: m.lens)
       Spacer(minLength: 0)
-      StatusIslands(status: m.status, look: m.look, light: m.light).equatable()
+      StatusIslands(status: m.status, look: m.look, light: m.light, dim: !m.display.focused).equatable()
     }
     .padding(.horizontal, m.style.gap)
     .padding(.top, m.style.gap)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    // the whole strip takes the mouse (a right click anywhere opens the menu);
+    // the whole strip takes the mouse (a right click anywhere opens the menu, Config.themeMenu);
     // fully transparent pixels would let clicks through to the desktop
     .background(Color.black.opacity(0.002))
     .coordinateSpace(name: "bar")
@@ -634,102 +664,138 @@ final class GlassMenu {
   }
 }
 
-/// The battery tooltip, centered under the battery island.
-final class TipModel: ObservableObject {
-  @Published var text = ""
-  @Published var style = BarStyle()
-  @Published var scale: CGFloat = 1
-  @Published var open = false
+class FlippedView: NSView {
+  override var isFlipped: Bool { true }
 }
 
-struct TipView: View {
-  @ObservedObject var m: TipModel
+func menuLabel(_ text: String, _ font: NSFont, _ color: NSColor) -> NSTextField {
+  let l = NSTextField(labelWithString: text)
+  l.font = font
+  l.textColor = color
+  return l
+}
 
-  var label: some View {
-    let s = m.scale
-    return Text(m.text).font(Font(nsFont(m.style.family, m.style.secondary, m.style.size * s) as CTFont))
-      .foregroundStyle(.primary)
-      .padding(.horizontal, 10 * s)
-      .frame(height: m.style.island * s)
+/// A clickable menu row drawn like the system battery menu's (Control
+/// Center's menus: a quiet fill inset 7pt, not the accent capsule NSMenu
+/// draws; measured on it at 2x). Tracks the mouse itself: the menu doesn't
+/// redraw a view item when its highlight changes.
+final class MenuRow: FlippedView {
+  let label: NSTextField
+  let action: () -> Void
+  var hovered = false {
+    didSet { if hovered != oldValue { needsDisplay = true } }
   }
 
-  var body: some View {
-    // glass inserted into a container, like the menu (GlassMenu)
-    ZStack {
-      label.hidden()
-      GlassEffectContainer {
-        if m.open {
-          label
-            .glassEffect(Config.popupGlass, in: RoundedRectangle(cornerRadius: m.style.radius * m.scale, style: .continuous))
-            .glassEffectTransition(.materialize)
-        }
-      }
-    }
-    .fixedSize()
-    .padding(popupMargin)
+  init(_ title: String, action: @escaping () -> Void) {
+    label = menuLabel(title, .menuFont(ofSize: 0), .labelColor)
+    self.action = action
+    super.init(frame: .zero)
+    label.sizeToFit()
+    label.setFrameOrigin(NSPoint(x: 12, y: 3)) // caps 6pt below the fill's top
+    addSubview(label)
+    frame = NSRect(x: 0, y: 0, width: label.frame.width + 24, height: 24)
+    autoresizingMask = .width // the menu stretches it to its own width
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    for t in trackingAreas { removeTrackingArea(t) }
+    addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                   owner: self))
+  }
+
+  override func mouseEntered(with event: NSEvent) { hovered = true }
+  override func mouseExited(with event: NSEvent) { hovered = false }
+
+  override func draw(_ dirtyRect: NSRect) {
+    guard hovered else { return }
+    NSColor.quaternaryLabelColor.setFill()
+    let r = NSRect(x: 7, y: 0, width: bounds.width - 14, height: 22)
+    NSBezierPath(cgPath: squircle(r, 10.5)).fill()
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    hovered = false
+    enclosingMenuItem?.menu?.cancelTracking()
+    action()
   }
 }
 
-final class GlassTip {
-  let model = TipModel()
-  lazy var host = NSHostingView(rootView: TipView(m: model))
-  lazy var panel: NSPanel = {
-    let p = barPanel(level: .popUpMenu)
-    p.ignoresMouseEvents = true
-    p.contentView = host
-    return p
-  }()
-  var shownOn: CGDirectDisplayID = 0
+/// The battery menu: a real NSMenu, like the system's battery menu in the
+/// menu bar (header, power source, status, Battery Settings…). Opens on a
+/// click on the battery island, below it; updates in place while open.
+final class BatteryMenu: NSObject, NSMenuDelegate {
+  let menu = NSMenu()
+  /// The header, the grey lines and the separator: one view, laid out like
+  /// the system battery menu (measured on it at 2x; plain NSMenu items are
+  /// 24pt rows at a 17pt inset, a disabled one is grey, an enabled one
+  /// highlights): text 15pt from the menu's edge, header caps 16.5pt below
+  /// its top, 25pt header → first line, lines 18pt apart, separator 18.75pt
+  /// under the last line, Battery Settings… 5pt under it.
+  let info = SeparatedView()
+  let header = menuLabel("Battery", .systemFont(ofSize: 0, weight: .semibold), .labelColor)
+  /// a point smaller than the menu font (12 matches the system's widths to
+  /// the pixel), in the disabled item's color (matches it to the pixel)
+  let source = menuLabel("", .menuFont(ofSize: 12), .disabledControlTextColor)
+  let status = menuLabel("", .menuFont(ofSize: 12), .disabledControlTextColor)
+  var isOpen = false
 
-  /// anchor: the battery island in screen coordinates (bottom-left origin)
-  func show(_ text: String, on did: CGDirectDisplayID, under anchor: NSRect, style: BarStyle, scale: CGFloat) {
-    guard !text.isEmpty else { hide(); return }
-    model.text = text
-    model.style = style
-    model.scale = scale
-    host.layoutSubtreeIfNeeded()
-    let size = host.fittingSize
-    let f = screen(did)?.frame ?? anchor
-    let m = popupMargin, w = size.width - 2 * m
-    let x = min(max(f.minX + style.gap, anchor.midX - w / 2), f.maxX - style.gap - w)
-    panel.setFrame(NSRect(x: x - m, y: anchor.minY - style.popupOffset - size.height + m,
-                          width: size.width, height: size.height), display: true)
-    if shownOn == 0 {
-      panel.alphaValue = 1
-      panel.orderFrontRegardless()
-      DispatchQueue.main.async {
-        guard self.shownOn != 0 else { return }
-        popupGlass(true, set: { self.model.open = $0 }, removed: {})
-      }
-    }
-    shownOn = did
-  }
-
-  /// See GlassMenu.warm.
-  func warm(style: BarStyle) {
-    guard shownOn == 0, let sc = NSScreen.screens.first else { return }
-    model.text = "100%"
-    model.style = style
-    model.open = true
-    host.layoutSubtreeIfNeeded()
-    let size = host.fittingSize
-    panel.setFrame(NSRect(x: sc.frame.midX, y: sc.frame.maxY - style.bar - style.popupOffset - size.height,
-                          width: size.width, height: size.height), display: true)
-    panel.alphaValue = 0
-    panel.orderFrontRegardless()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-      guard self.shownOn == 0 else { return }
-      self.model.open = false
-      self.panel.orderOut(nil)
+  final class SeparatedView: FlippedView {
+    var line: CGFloat = 0
+    override func draw(_ dirtyRect: NSRect) {
+      NSColor.separatorColor.setFill()
+      NSRect(x: 14, y: line, width: bounds.width - 28, height: 1).fill()
     }
   }
 
-  func hide() {
-    guard shownOn != 0 else { return }
-    shownOn = 0
-    popupGlass(false, set: { self.model.open = $0 }) {
-      if self.shownOn == 0 { self.panel.orderOut(nil) }
+  override init() {
+    super.init()
+    menu.autoenablesItems = false
+    menu.delegate = self
+    for l in [header, source, status] { info.addSubview(l) }
+    info.autoresizingMask = .width
+    let item = NSMenuItem()
+    item.view = info
+    menu.addItem(item)
+    let settings = NSMenuItem()
+    settings.view = MenuRow("Battery Settings…") {
+      NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension")!)
     }
+    menu.addItem(settings)
+  }
+
+  func update(_ b: BatteryState) {
+    source.stringValue = "Power Source: " + (b.charge > 0 ? "Power Adapter" : "Battery")
+    status.stringValue = b.status
+    // (the menu's own padding above the first item: 5pt)
+    var w: CGFloat = 0
+    for l in [header, source, status] { l.sizeToFit(); w = max(w, l.frame.width) }
+    header.setFrameOrigin(NSPoint(x: 12, y: 8))
+    source.setFrameOrigin(NSPoint(x: 12, y: 33.5))
+    status.setFrameOrigin(NSPoint(x: 12, y: 33.5 + 18))
+    info.line = 73
+    info.frame = NSRect(x: 0, y: 0, width: w + 24, height: 79)
+    info.needsDisplay = true
+  }
+
+  /// Below the island, one gap away, like the islands from each other: left
+  /// edge on the island's, or, when that runs off the screen, the right edge
+  /// one gap from the screen's. anchor: the island, screen coordinates
+  /// (bottom-left origin).
+  func show(_ b: BatteryState, under anchor: NSRect, gap: CGFloat, screen: NSRect) {
+    update(b)
+    let x = min(anchor.minX, screen.maxX - gap - menu.size.width)
+    // AppKit puts the first item at the point: the menu's own padding above it
+    // (5pt on macOS 26, measured) goes on top
+    menu.popUp(positioning: nil, at: NSPoint(x: x, y: anchor.minY - gap - 5), in: nil)
+  }
+
+  func menuWillOpen(_ menu: NSMenu) { isOpen = true }
+  func menuDidClose(_ menu: NSMenu) {
+    isOpen = false
+    for i in menu.items { (i.view as? MenuRow)?.hovered = false } // no exit event once it's closed
   }
 }
 
@@ -740,8 +806,7 @@ final class GlassBar {
   var models: [CGDirectDisplayID: BarModel] = [:]
   var panels: [CGDirectDisplayID: NSPanel] = [:]
   let menu = GlassMenu()
-  let tip = GlassTip()
-  var tipOn: CGDirectDisplayID = 0
+  let battery = BatteryMenu()
   var warmed = false
   var onMenuSelect: ((String) -> Void)? {
     get { menu.onSelect }
@@ -761,7 +826,7 @@ final class GlassBar {
   /// Screens changed: re-place the windows (the state names displays by id).
   func screensChanged() {
     menu.hide()
-    tip.hide()
+    battery.menu.cancelTracking()
     apply(state, force: true)
   }
 
@@ -795,13 +860,19 @@ final class GlassBar {
       // with the rest of the switch instead of a layout pass later
       let cellsStay = moved && old.style == new.style && before?.strip == d.strip
         && sameCells(before?.spaces ?? [], d.spaces)
+      var ticked = m.status
+      ticked.time = new.status.time
+      let statusMoves = ticked != new.status
       let update = {
         if m.style != new.style { m.style = new.style }
         if m.display != d { m.display = d }
-        if m.status != new.status { m.status = new.status }
+        if m.status != new.status && !statusMoves { m.status = new.status }
         if cellsStay { withAnimation(Config.lens) { m.lens.target(d.spaces.first { $0.shown }?.n) } }
       }
       if moved { withAnimation(Config.layout, update) } else { update() }
+      // the right islands spring to a new layout, a bolt, a new date; the
+      // minute tick alone stays unanimated (no frames once a minute)
+      if statusMoves { withAnimation(Config.layout) { m.status = new.status } }
       if new.hidden { p.orderOut(nil) } else if !p.isVisible { p.orderFrontRegardless() }
       if p.isVisible && !m.appeared {
         sampleBackdrop(only: d.did, why: "bar opens")
@@ -816,16 +887,14 @@ final class GlassBar {
     }
     if new.hidden {
       menu.hide()
-      tip.hide()
-      tipOn = 0
+      battery.menu.cancelTracking()
     }
     menu.update(style: new.style)
     if !warmed, let d = new.displays.first {
       warmed = true
-      menu.warm(style: new.style, strip: d.strip)
-      tip.warm(style: new.style)
+      if Config.themeMenu { menu.warm(style: new.style, strip: d.strip) }
     }
-    if tipOn != 0, let b = new.status.battery, tip.model.text != b.status { showTip(on: tipOn) }
+    if battery.isOpen, let b = new.status.battery { battery.update(b) }
   }
 
   /// The same cells (numbers, apps, device glyphs), whichever is shown: the
@@ -857,23 +926,12 @@ final class GlassBar {
     guard let m = models[did] else { return }
     let n = p.flatMap { workspace(m, at: $0) }
     if n != m.hover { withAnimation(Config.hover) { m.hover = n } }
-    let onBattery = p.map { m.hits["battery"]?.contains($0) ?? false } ?? false
-    if onBattery { showTip(on: did) } else if tipOn == did { tipOn = 0; tip.hide() }
-  }
-
-  func showTip(on did: CGDirectDisplayID) {
-    guard let m = models[did], let b = m.status.battery, let r = m.hits["battery"], let p = panels[did] else { return }
-    tipOn = did
-    // the island's rect in screen coordinates
-    let f = p.frame
-    let anchor = NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
-    tip.show(b.status, on: did, under: anchor, style: m.style, scale: m.scale)
   }
 
   func click(_ did: CGDirectDisplayID, _ p: CGPoint, right: Bool) {
     guard let m = models[did] else { return }
     if right {
-      menu.toggle(on: did, style: m.style, strip: m.display.strip)
+      if Config.themeMenu { menu.toggle(on: did, style: m.style, strip: m.display.strip) }
       return
     }
     menu.hide()
@@ -881,6 +939,10 @@ final class GlassBar {
       if !(m.display.focused && m.display.spaces.first(where: { $0.n == n })?.shown == true) {
         AeroSpace.run(["workspace", "\(n)"])
       }
+    } else if let r = m.hits["battery"], r.contains(p), let b = m.status.battery,
+              let f = panels[did]?.frame, let sc = screen(did) {
+      let anchor = NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
+      battery.show(b, under: anchor, gap: m.style.gap, screen: sc.frame)
     } else if m.hits["input"]?.contains(p) == true {
       nextLayout()
     } else if m.hits["clock"]?.contains(p) == true {

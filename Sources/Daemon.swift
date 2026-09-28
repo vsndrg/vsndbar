@@ -19,10 +19,10 @@ import notify
 struct BarStyle: Equatable {
   var gap = Config.gap, bar = Config.bar
   var pillH = Config.pill, inset = Config.inset
-  /// Corner radius of the islands and the tooltip (the menu slider, 0...cornerMax); each
-  /// shape takes min(corner, its height / 2), inner pills concentric
-  var corner = Config.cornerDefault, cornerMax = Config.cornerMax
-  var family = Config.family, size = Config.textSize, battery = Config.batteryText
+  /// Corner radius of the islands (Config.corner, or the menu slider when
+  /// it is on); each shape takes min(corner, its height / 2), inner pills concentric
+  var corner = Config.corner, cornerMax = Config.cornerMax
+  var family = Config.family, size = Config.textSize, battery = Config.batteryText, batteryWeight = Config.batteryWeight
   var primary = Config.weightDefault, secondary = Config.lighter[Config.weightDefault]!
   /// popupR: the menu's (system)
   var popupH = Config.popupHeight, popupR = Config.popupRadius, popupOffset = Config.popupOffset
@@ -63,10 +63,11 @@ struct BarState: Equatable {
 // MARK: - Theme
 
 /// Text weight and corner radius, picked in the right-click menu, kept in
-/// ~/.local/state/vsndbar/theme ("weight=Medium\ncorner=8.5").
+/// ~/.local/state/vsndbar/theme ("weight=Medium\ncorner=8.5"). With the
+/// menu off the corner is Config.corner's.
 struct Theme {
   var weight = Config.weightDefault
-  var corner = Config.cornerDefault
+  var corner = Config.corner
 
   static let path = Config.state + "/theme"
 
@@ -82,7 +83,7 @@ struct Theme {
       let kv = line.split(separator: "=", maxSplits: 1).map(String.init)
       guard kv.count == 2 else { continue }
       if kv[0] == "weight", Config.lighter[kv[1]] != nil { t.weight = kv[1] }
-      if kv[0] == "corner", let v = Double(kv[1]) { t.corner = max(0, min(CGFloat(v), Config.cornerMax)) }
+      if kv[0] == "corner", Config.themeMenu, let v = Double(kv[1]) { t.corner = max(0, min(CGFloat(v), Config.cornerMax)) }
     }
     return t
   }
