@@ -132,11 +132,16 @@ AeroSpace:
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
   hover `.smooth(0.2)`), applied by `make install`.
 - Strip blur (user asked: "like Control Center", then "weaker, smoother, a bit lower"): its own panel per display
-  (`blurs`, level backstopMenu − 1, ignoresMouseEvents) from the top down to `Config.blurBelow` 36pt under the
+  (`blurs`, level backstopMenu − 1, ignoresMouseEvents) from the top down to `Config.blurBelow` 42pt under the
   strip (under windows it is hidden anyway). `BlurView` = private CABackdropLayer (windowServerAware) + CAFilter
-  `variableBlur`, radius (user tuned by hand, 10/6/4 read too strong) `Config.blurRadius` 1 at the strip's bottom, linearly to
-  `blurRadiusTop` 2 at the islands' top (user: "1 → 1.5 → 2", symmetric about the islands), held above; × smoothstep² over the blurBelow
-  band under it (a blur looks strong until its radius is small; linear fade read as a band; a fade across the
+  `variableBlur`, radius shape drawn by the user: `Config.blurRadius` (the middle, user: 1) flat from `blurRise`
+  (user: "start the rise a bit earlier" than the islands' top, 6) down to `blurHold` 3pt below the strip; above
+  it rises along e^(1−1/u) BY RATIO (log r interpolated; linear 1→3 over a few pt read as a jump) to
+  `blurRadiusTop` (user: 2, blurRise 12) at the screen's edge; below the hold the SQUARE goes down
+  the C∞ step S = g(x)/(g(x)+g(1−x)), g = e^(−1/x): share = √(1−S) over the rest of the blurBelow band (a 1–2 px
+  blur shows as contrast loss ∝ r²; by ratio it squeezed the visible 1 → 0.4 into ~5pt: user felt an edge at
+  47pt) (user: "higher derivatives
+  must not jump": u² / smoothstep had curvature jumps at the joins; the saturation mask uses the same fade) (a blur looks strong until its radius is small; linear fade read as a band; a fade across the
   strip put the visible edge mid-island: user "несимметрично"; 10pt band read abrupt). Mask in layer points UNSTRETCHED (a 1px column
   only covered x 0–1): full-size RGBA, alpha = share of the radius, rows top-down. Islands' glass refracts it;
   backdropProfile reads below the blur panel (wallpaper only). User: "мутный" vs Control Center → system

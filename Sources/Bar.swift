@@ -358,7 +358,7 @@ final class BlurView: NSView {
   let blur: NSObject?
   let saturate: NSObject?
   /// the saturation eases out with the radius: the whole effect fades to what is behind
-  let fade = CAGradientLayer()
+  let fade = CALayer()
   var maskSize = CGSize.zero
 
   static var maxRadius: CGFloat { max(Config.blurRadius, Config.blurRadiusTop) }
@@ -397,41 +397,59 @@ final class BlurView: NSView {
     backdrop.frame = bounds
     if bounds.size != maskSize {
       maskSize = bounds.size
-      blur.setValue(blurMask(bounds.size), forKey: "inputMaskImage")
+      let h = bounds.height
+      // the filter takes its mask in the layer's points, unstretched: full width
+      blur.setValue(BlurView.mask(width: bounds.width, height: h) { BlurView.radius(at: $0, height: h) / BlurView.maxRadius },
+                    forKey: "inputMaskImage")
       backdrop.filters = [blur] + (saturate.map { [$0] } ?? [])
-      // opaque over the strip, clear at the bottom (layer y is up: 0 = bottom)
-      let h = max(1, bounds.height)
+      // a layer mask is stretched: one column
       fade.frame = bounds
-      fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
-      fade.startPoint = CGPoint(x: 0.5, y: 0)
-      fade.endPoint = CGPoint(x: 0.5, y: min(1, Config.blurBelow / h))
+      fade.contents = BlurView.mask(width: 1, height: h) { BlurView.fade(at: $0, height: h) }
     }
     CATransaction.commit()
   }
 
-  /// The filter takes the mask in the layer's points, unstretched: one pixel
-  /// per point, rows from the top, alpha = the share of maxRadius. Over the
-  /// islands the radius goes evenly from blurRadiusTop (their top edge, held
-  /// above) to blurRadius (their bottom edge, the strip's), symmetric about
-  /// their middle; under the strip it eases out over Config.blurBelow
-  /// (smoothstep, squared: a blur looks about as strong until its radius is
-  /// small, so it drops early).
-  func blurMask(_ size: CGSize) -> CGImage? {
-    let w = max(1, Int(size.width.rounded(.up))), h = max(1, Int(size.height.rounded(.up)))
+  /// 0 → 1 with every derivative 0 at both ends (C∞): where it meets a flat
+  /// part nothing jumps, not the slope, not the curvature, nothing higher.
+  static func smooth(_ x: CGFloat) -> CGFloat {
+    if x <= 0 { return 0 }
+    if x >= 1 { return 1 }
+    let a = exp(-1 / x), b = exp(-1 / (1 - x))
+    return a / (a + b)
+  }
+
+  /// Below the hold: the share of blurRadius, 1 at the hold's end, 0 at the
+  /// bottom. A blur of a pixel or two shows only as lost fine contrast, which
+  /// grows as the radius squared: the square goes down the C∞ step. (By
+  /// ratio, like the rise, it spent half the fade on invisible radii and
+  /// squeezed the visible 1 → 0.4 into a few points: read as an edge.)
+  static func fade(at p: CGFloat, height h: CGFloat) -> CGFloat {
+    let low = h - Config.blurBelow + min(Config.blurHold, Config.blurBelow)
+    guard p > low else { return 1 }
+    return sqrt(1 - smooth((p - low) / max(1, h - low))) // 0 at the hold's end, 1 at the bottom
+  }
+
+  /// The radius at a point row (from the top): blurRadius from blurRise below
+  /// the screen's edge to blurHold below the strip; above, rising to
+  /// blurRadiusTop at the edge; below, eased out (fade). The rise goes by
+  /// ratio, not by points (a blur looks twice as strong at twice the radius:
+  /// 1 → 3 over a few points read as a jump), along e^(1 - 1/u): leaves the
+  /// flat part with every derivative 0.
+  static func radius(at p: CGFloat, height h: CGFloat) -> CGFloat {
+    let rise = max(1, min(Config.blurRise, h - Config.blurBelow))
+    let (mid, top) = (Config.blurRadius, Config.blurRadiusTop)
+    guard p < rise else { return mid * fade(at: p, height: h) }
+    let u = (rise - p) / rise // 0 where the rise starts, 1 at the screen's edge
+    let k = exp(1 - 1 / max(u, 0.001))
+    return mid > 0 && top > 0 ? mid * pow(top / mid, k) : mid + (top - mid) * k
+  }
+
+  /// Alpha by point row (rows from the top, sampled at their middles).
+  static func mask(width: CGFloat, height: CGFloat, _ value: (CGFloat) -> CGFloat) -> CGImage? {
+    let w = max(1, Int(width.rounded(.up))), h = max(1, Int(height.rounded(.up)))
     var px = [UInt8](repeating: 0, count: w * h * 4)
-    let strip = size.height - Config.blurBelow, islandTop = min(Config.gap, strip)
     for y in 0..<h {
-      let p = CGFloat(y) + 0.5
-      let r: CGFloat
-      if p > strip {
-        let t = min(1, max(0, (size.height - p) / Config.blurBelow)) // 1 at the strip, 0 at the bottom
-        let e = t * t * (3 - 2 * t)
-        r = Config.blurRadius * e * e
-      } else {
-        let u = min(1, max(0, (strip - p) / max(1, strip - islandTop))) // 0 at the islands' bottom, 1 at their top
-        r = Config.blurRadius + (Config.blurRadiusTop - Config.blurRadius) * u
-      }
-      let v = UInt8((min(1, r / max(BlurView.maxRadius, 0.01)) * 255).rounded())
+      let v = UInt8((min(1, max(0, value(CGFloat(y) + 0.5))) * 255).rounded())
       for i in stride(from: y * w * 4, to: (y + 1) * w * 4, by: 1) { px[i] = v }
     }
     guard let data = CGDataProvider(data: Data(px) as CFData) else { return nil }
