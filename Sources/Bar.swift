@@ -430,7 +430,7 @@ final class BlurView: NSView {
   }
 
   /// The radius at a point row (from the top): blurRadius from blurRise below
-  /// the screen's edge to blurHold below the strip; above, rising to
+  /// the screen's edge to blurHold below the strip (negative: inside it); above, rising to
   /// blurRadiusTop at the edge; below, eased out (fade). The rise goes by
   /// ratio, not by points (a blur looks twice as strong at twice the radius:
   /// 1 → 3 over a few points read as a jump), along e^(1 - 1/u): leaves the
@@ -441,7 +441,8 @@ final class BlurView: NSView {
     guard p < rise else { return mid * fade(at: p, height: h) }
     let u = (rise - p) / rise // 0 where the rise starts, 1 at the screen's edge
     let k = exp(1 - 1 / max(u, 0.001))
-    return mid > 0 && top > 0 ? mid * pow(top / mid, k) : mid + (top - mid) * k
+    // times the fade: it may already have begun up here (blurHold < 0)
+    return (mid > 0 && top > 0 ? mid * pow(top / mid, k) : mid + (top - mid) * k) * fade(at: p, height: h)
   }
 
   /// Alpha by point row (rows from the top, sampled at their middles).

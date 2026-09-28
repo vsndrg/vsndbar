@@ -132,10 +132,12 @@ AeroSpace:
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
   hover `.smooth(0.2)`), applied by `make install`.
 - Strip blur (user asked: "like Control Center", then "weaker, smoother, a bit lower"): its own panel per display
-  (`blurs`, level backstopMenu − 1, ignoresMouseEvents) from the top down to `Config.blurBelow` 42pt under the
+  (`blurs`, level backstopMenu − 1, ignoresMouseEvents) from the top down to `Config.blurBelow` (56) under the
   strip (under windows it is hidden anyway). `BlurView` = private CABackdropLayer (windowServerAware) + CAFilter
   `variableBlur`, radius shape drawn by the user: `Config.blurRadius` (the middle, user: 1) flat from `blurRise`
-  (user: "start the rise a bit earlier" than the islands' top, 6) down to `blurHold` 3pt below the strip; above
+  (user: "start the rise a bit earlier" than the islands' top, 6) down to `blurHold` below the strip (user: −32 = the fade
+  starts at the screen's top; its length blurBelow − blurHold (user: 88pt) is the smoothness: 25pt read abrupt, 35→135 smooth
+  but too low → same length moved up; radius = rise × fade); above
   it rises along e^(1−1/u) BY RATIO (log r interpolated; linear 1→3 over a few pt read as a jump) to
   `blurRadiusTop` (user: 2, blurRise 12) at the screen's edge; below the hold the SQUARE goes down
   the C∞ step S = g(x)/(g(x)+g(1−x)), g = e^(−1/x): share = √(1−S) over the rest of the blurBelow band (a 1–2 px

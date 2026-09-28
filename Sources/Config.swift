@@ -116,16 +116,16 @@ enum Config {
 
   /// The strip's backdrop: what lies under the bar (the wallpaper) blurred,
   /// like Control Center's, so the islands' glass refracts a blur. The radius
-  /// (points; 0 = off) is `blurRadius` from `blurRise` points below the
-  /// screen's top edge down to `blurHold` points below the strip; above it
-  /// curves up (squared: flat where it leaves the middle, steepest at the
-  /// edge) to `blurRadiusTop` at the edge; below the hold it eases to none by
-  /// `blurBelow` points under the strip (its own window, clicks pass through).
+  /// (points; 0 = off) is `blurRadius`, curving up above `blurRise` points
+  /// below the screen's top edge to `blurRadiusTop` at the edge; from
+  /// `blurHold` points below the strip (negative: inside it) it eases to
+  /// none by `blurBelow` points under the strip (its own window, clicks pass
+  /// through). The fade's length (blurBelow − blurHold) is its smoothness.
   static let blurRadius: CGFloat = 1
   static let blurRadiusTop: CGFloat = 2
   static let blurRise: CGFloat = 12
-  static let blurHold: CGFloat = 3
-  static let blurBelow: CGFloat = 42
+  static let blurHold: CGFloat = -32
+  static let blurBelow: CGFloat = 56
   /// Saturation after the blur (1 = off): a blur averages colors into grey,
   /// Apple's win them back. Liquid Glass (Control Center): regular 1.3 at
   /// radius 5, clear 1 at 7.2; the old materials (menu 2.2, HUD 1.6, radius
