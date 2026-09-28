@@ -1,0 +1,131 @@
+# VsndBar: the glass bar (Swift) + AeroSpace
+
+Context file for new sessions. Keep it short; update "Status" and "TODO" as work progresses.
+The user speaks Russian; answer in Russian. Details of every change are in `git log` of the repos.
+Main goal (user): smooth and cheap on energy. Look and behaviour don't change without asking.
+
+## Repos (each its own git repo)
+- `~/.config/vsndbar` — the bar: one Swift process (`Sources/`), `make install` → `~/Applications/VsndBar.app`
+  + LaunchAgent `com.vsndrg.vsndbar` + `~/.local/bin/vsndbar` (CLI: `toggle`, `sleep`, `layout`, `screens`).
+  State in `~/.local/state/vsndbar/` (theme, sidecar-*, sleep.log, daemon.log).
+- `~/.config/aerospace` — `aerospace.toml`, `patches/{bar-state,monitors,queries,switch-flicker,window-hiding}.patch`,
+  `patches/build.sh [--install|--restore]` (source in `~/.cache/aerospace-src`, builds offline)
+- `~/.config/sketchybar` — the previous bar (Lua via SbarLua + barhelper), archived: disabled, not uninstalled.
+- `~/.config/karabiner` — F6 → `~/.local/bin/vsndbar sleep` (its karabiner.json has the user's own uncommitted edits).
+- `~/.config` is also a repo with NO commits and secrets staged (`github-copilot/auth.db`) — don't commit it.
+
+## Architecture
+- `Daemon.swift` keeps the state (AeroSpace workspaces, displays, layout, battery, clock, theme, hidden) and
+  hands the whole `BarState` to `Bar.swift` (`GlassBar.apply`), which diffs per window. Nothing polls: AeroSpace
+  pushes (socket), battery = IOKit power source notifications, layout = TIS notification, displays =
+  didChangeScreenParameters (+0.5s settle, menu bar height retries), clock = one timer on each minute boundary.
+- AeroSpace → bar: `bar-state.patch` serves `/tmp/bobko.aerospace-$USER-bar.sock`: current state on connect, then
+  one JSON line per model change (published from `refreshModel()` and the end of refresh sessions, deduped,
+  only the newest kept for a slow reader). The daemon reconnects on AeroSpace's launch notification.
+  Bar clicks → `workspace N` over AeroSpace's own command socket (no CLI process).
+- Launch: the agent runs `VsndBar launch`, which opens the app as `daemon` through LaunchServices and waits
+  for it. Only an app LaunchServices launched gets main thread priority 46 (exec'd by launchd: 31) — the bar
+  renders every animation frame on the main thread. Needs `-target arm64-apple-macos26.0` (else -10825).
+  Signed with the local `aerospace-local-codesign` cert.
+- cmd-shift-b → `vsndbar toggle` → Darwin notification `com.vsndrg.vsndbar.toggle`.
+
+## Hard constraints (found the hard way, don't re-derive)
+Bar:
+- The bar = the daemon's windows: one NSPanel per display at the backstopMenu level (-20, the auto-hidden
+  menu bar covers it), no fullScreenAuxiliary. Liquid Glass refracts what is behind the window → can't be
+  baked into images. One state change = one SwiftUI transaction per window.
+- Views take values (`Look`, `SpaceItem`, `StatusState`) and are `Equatable`: a switch re-renders only what
+  changed. When only the shown workspace changes (same cells), the lens is retargeted inside the switch's
+  own transaction (`Lens.target`); otherwise it follows the layout's reported cell frames (`Lens.follow`).
+- Mouse in daemon windows (policy .prohibited, never key): tracking areas activeAlways, acceptsFirstMouse;
+  hit testing via frames the SwiftUI layout reports (HitKey), not SwiftUI gestures. Fully transparent
+  pixels pass clicks through → the strip has a 0.002-alpha background (right click anywhere opens the menu).
+- Glass looks "active" only in a key window, and the panels must never be key. `ActivePanel` overrides the
+  private `_hasActiveAppearance` → YES (user approved). becomesKeyOnlyIfNeeded forces the dull look.
+- Glass whose frame animates (the lens) must be `.interactive()`, else it re-animates from its old place.
+- No public "selection lens" on macOS; `glassEffectID` morph = cross-fade. User rejected hand-made
+  morphs/drips → system `.bouncy` only.
+- Multi-display: `Display.mon` = NSScreen index = AeroSpace monitor id; windows keyed by CGDirectDisplayID,
+  added/removed live, re-placed on didChangeScreenParameters. No restarts.
+- Popups (theme menu, battery tooltip): glass panels at popUpMenu level on the display under the mouse.
+  Menu: text weight + corner radius slider; picks go straight to `Daemon.menuSelect`, the menu updates in
+  place and stays open; closes on a click elsewhere / app activation (ignored right after a menu click:
+  AeroSpace focuses the clicked display) — those monitors exist only while it is open. Slider = system
+  Slider drawn only; the daemon drags it itself (knob 22pt), previews live, commits on release.
+  Popups appear by insertion into a GlassEffectContainer on `.bouncy` + `.materialize`; panels have a 20pt
+  transparent margin for the materialize blur. First render of a new panel is slow → warmed at start.
+- F6 (Karabiner) → `vsndbar sleep`: ends Sidecar sessions (private SidecarCore `SidecarDisplayManager`,
+  else the iPad stays lit), sleeps. Reconnect after wake + unlock lives in the daemon (`SidecarReconnect`,
+  also covers lid / idle sleep): iPads connected at willSleep + ones lost in the 30s before it. Lists in
+  `~/.local/state/vsndbar/sidecar-{reconnect,lost}` (survive daemon restarts). Log: `sleep.log`.
+
+AeroSpace:
+- A hidden workspace remembers its monitor by the monitor's top-left point; a missing monitor maps to the
+  nearest one. Sidecar disconnect makes its windows "die" briefly → the closed-windows cache re-homed iPad
+  workspaces to main → monitors.patch stores/restores the home point. Rules in the patch: showing a ws while
+  its home monitor is missing doesn't re-home it; a moved monitor takes its workspaces along; explicit moves
+  (move-workspace-to-monitor, summon) always re-home; a ws still shown on main when its monitor returns goes
+  back (happens after sleep).
+- Windows are hidden 1pt inside a bottom corner of their monitor; window-hiding.patch picks the corner
+  covering the least of other monitors (iPad above the Mac). 0pt inside → macOS pulls it back 40pt.
+- Moves windows via AX, per app, async; no atomic switch without SIP. Patches reorder/wait.
+- Forgets window→workspace (and ws→monitor) on restart; `build.sh --install` snapshots and restores it.
+- Signed with local cert `aerospace-local-codesign` (login keychain) so Accessibility survives rebuilds.
+  Build uses Command Line Tools (Xcode license not accepted).
+
+## Design (user decisions)
+- One gap G = 6 (`Config.gap`): edge → island → window → window → edge, and between islands; measured from
+  the window. Bar h 32 = notch strip. Per display strip = min(32, its menu bar height) (built-in 33, iPad
+  30); on a shorter strip the islands are scaled as a whole, gap kept at G. Windows start at 38 built-in /
+  36 others, outer.bottom 5 (AeroSpace lays out 1pt short). aerospace.toml gaps must be changed by hand.
+- Islands: regular Liquid Glass, no tint, continuous corners. Corner radius = ONE number (menu slider
+  0…`screenCorner` 21, default 8.5, saved in the theme state) for islands + tooltip, each min(r, h/2).
+  Theme menu keeps the system menu radius 12.
+- Lens (selected workspace) h−6, inset 3: light glass (regular, 30% white tint) on the focused display,
+  regular on the others; default `.bouncy`, clamped to the island. Hover: `.primary` fill 50%, same in menu.
+- No accent, no active-window border. Text/icons: system label colors.
+- Built-in display bottom corners masked to match the top ones (`Corners`, `screenCorner` 21): static
+  layer, hidden on native fullscreen Spaces, `sharingType = .none` (not in screenshots).
+- App icons follow the system icon theme: the daemon watches `~/Library/Preferences`; 5–10s lag accepted.
+- Text: SF Pro Text, weight from the menu (Regular/Medium/Semibold, secondary one step lighter). Date =
+  time weight, "Mon 28 Sep" (English). Battery: level knocked out of a solid body like macOS, template
+  image, red at ≤20% off AC; tooltip wording = macOS menu; updates as soon as IOKit reports (user OK'd).
+- Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
+- Workspaces: every bar shows ALL existing workspaces (occupied or shown); ones living on another monitor
+  carry that monitor's device glyph (laptopcomputer / ipad.landscape / display) between digit and icons.
+  Right side identical on every monitor. Bar clicks = cmd-N. Layout click = next input source, clock click
+  = Calendar.
+
+## Multi-monitor behaviour (agreed spec, implemented in aerospace.toml + patches)
+Generic: no hardcoded monitor names/sizes. Typical use: iPad (Sidecar) for Zoom/Telegram.
+- cmd-N: focus ws N on the monitor where it lives. N doesn't exist / is hidden and empty → opens on MAIN.
+- cmd-alt-N: `summon-workspace N` to the focused monitor; the monitor it left shows another of its own
+  non-empty workspaces, else a fresh stub (11, 12…).
+- cmd-shift-N: move window to ws N wherever it lives; focus stays.
+- cmd-shift-h/l: move the WHOLE focused workspace to the next/prev monitor; focus and cursor stay.
+- Cursor: `move-mouse monitor-lazy-center` via exec-and-forget (runs after the whole binding).
+- Disconnect: its workspaces move to main. Reconnect: they return (monitors.patch).
+
+## Measuring (tools/bench, see bench.sh header)
+- Frame probe: lens frame times recorded in `LensFrame.body` (probe build only), gaps > 1.5 periods at
+  120 Hz = drops. Noisy run to run (±2%): compare several runs. Over half the recorded frames are the
+  spring's sub-pixel tail (< 2 pt/s); drops there are invisible.
+- Visual check: `screencapture -x -R x,y,w,h` / `-v`; diff with PIL/numpy (venv in the scratchpad). Judge
+  glass over the wallpaper, not over windows. Real mouse: post `CGEvent`s (small Swift scripts).
+
+## Status (2026-09-28)
+Rewrite done and running (sketchybar disabled). Verified: pixel-identical to the old bar on both displays
+(same state), clicks, theme menu picks + close, tooltip, toggle, crash restart. 20 switches 1↔3 (iPad
+connected): old — 296 processes spawned, lens drops 12%, worst gap 51 ms; now — 98 (20 of them the
+benchmark's own `aerospace` CLI calls), drops 0.8–1.2%, worst gap ~20 ms, bar energy ~0.9 J (old bar
+process 1.2 J + Lua + its processes). Idle: 20 wakeups/min (old: ~143).
+
+## Open issues / TODO
+- Not tested yet by hand: Sidecar connect/disconnect (bars appear/vanish), F6 / lid sleep reconnect.
+- Energy idea, NOT applied (touches "system .bouncy only"): SwiftUI runs `.bouncy` ~1.3s until 0.001pt;
+  ending the lens spring at 0.05pt (same Spring math via CustomAnimation, additive merge = same retarget)
+  would cut ~⅓ of switch frames invisibly. Ask the user first.
+- Second display: lower accordion window flashes on switch (AeroSpace). Planned: confirmed ordering instead
+  of timeouts — per monitor; place + confirm the top window before revealing lower accordion windows; hide
+  old windows top-down only after the ones below are gone; ~1s timeout as liveness fallback only.
+- summon-workspace from an EMPTY ws on another monitor once landed on main (AeroSpace native-focus race).

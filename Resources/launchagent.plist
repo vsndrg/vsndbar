@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.vsndrg.vsndbar</string>
+	<!-- `launch` opens the app through LaunchServices and waits for it (see main.swift) -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>@APP@/Contents/MacOS/VsndBar</string>
+		<string>launch</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<string>com.vsndrg.VsndBar</string>
+	<key>StandardErrorPath</key>
+	<string>@STATE@/launch.log</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>
