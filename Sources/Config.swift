@@ -85,7 +85,7 @@ enum Config {
   /// The hover fill following the mouse.
   static let hover: Animation? = .smooth(duration: 0.2)
   /// A display gaining / losing focus: its bar's text and icons brightening / dimming.
-  static let focus: Animation? = .smooth(duration: 0.25)
+  static let focus: Animation? = .smooth(duration: 0.05)
   /// An island switching between the dark and the light appearance.
   static let tone: Animation? = .smooth(duration: 0.1)
 
