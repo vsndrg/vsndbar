@@ -8,7 +8,7 @@ Main goal (user): smooth and cheap on energy. Look and behaviour don't change wi
 - `~/.config/vsndbar` — the bar: one Swift process (`Sources/`), `make install` → `~/Applications/VsndBar.app`
   + LaunchAgent `com.vsndrg.vsndbar` + `~/.local/bin/vsndbar` (CLI: `toggle`, `sleep`, `layout`, `screens`).
   State in `~/.local/state/vsndbar/` (theme, sidecar-*, sleep.log, daemon.log).
-- `~/.config/aerospace` — `aerospace.toml`, `patches/{bar-state,menu-bar,monitors,queries,switch-flicker,window-hiding}.patch`,
+- `~/.config/aerospace` — `aerospace.toml`, `patches/{back-and-forth,bar-state,menu-bar,monitors,queries,switch-flicker,window-hiding}.patch`,
   `patches/build.sh [--install|--restore]` (source in `~/.cache/aerospace-src`, builds offline)
 - `~/.config/sketchybar` — the previous bar (Lua via SbarLua + barhelper), archived: disabled, not uninstalled.
 - `~/.config/karabiner` — F6 → `~/.local/bin/vsndbar sleep` (its karabiner.json has the user's own uncommitted edits).
@@ -164,6 +164,8 @@ AeroSpace:
 ## Multi-monitor behaviour (agreed spec, implemented in aerospace.toml + patches)
 Generic: no hardcoded monitor names/sizes. Typical use: iPad (Sidecar) for Zoom/Telegram.
 - cmd-N: focus ws N on the monitor where it lives. N doesn't exist / is hidden and empty → opens on MAIN.
+  cmd-N on the focused N → back to the previously focused ws (any monitor; toggle of two; nothing if it
+  is gone: back-and-forth.patch). Bar clicks don't go back.
 - cmd-alt-N: `summon-workspace N` to the focused monitor; the monitor it left shows another of its own
   non-empty workspaces, else a fresh stub (11, 12…).
 - cmd-shift-N: move window to ws N wherever it lives; focus stays.
