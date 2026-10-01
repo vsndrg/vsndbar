@@ -21,7 +21,7 @@ Main goal (user): smooth and cheap on energy. Look and behaviour don't change wi
   didChangeScreenParameters (+0.5s settle, menu bar height retries), clock = one timer on each minute boundary.
 - AeroSpace → bar: `bar-state.patch` serves `/tmp/bobko.aerospace-$USER-bar.sock`: current state on connect, then
   one JSON line per model change (published from `refreshModel()` and the end of refresh sessions, deduped,
-  only the newest kept for a slow reader). The daemon reconnects on AeroSpace's launch notification.
+  only the newest kept for a slow reader). The daemon reconnects when AeroSpace shows up in runningApplications (KVO; didLaunch skips LSUIElement apps).
   Bar clicks → `workspace N` over AeroSpace's own command socket (no CLI process).
 - Launch: the agent runs `VsndBar launch`, which opens the app as `daemon` through LaunchServices and waits
   for it. Only an app LaunchServices launched gets main thread priority 46 (exec'd by launchd: 31) — the bar

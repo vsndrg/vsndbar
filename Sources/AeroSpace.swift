@@ -27,14 +27,17 @@ final class AeroSpace {
   private var buffer = Data()
   private var chunk = [UInt8](repeating: 0, count: 65536)
   private var retry: DispatchWorkItem?
+  private var launches: NSKeyValueObservation?
 
   func start() {
-    // AeroSpace (re)started: its socket shows up a moment after launch
-    NSWorkspace.shared.notificationCenter.addObserver(
-      forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
-    ) { [weak self] n in
-      let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-      if app?.bundleIdentifier == Config.aerospaceApp { self?.connect(attempt: 0) }
+    // AeroSpace (re)started: its socket shows up a moment after launch.
+    // didLaunchApplicationNotification skips LSUIElement apps (AeroSpace is
+    // one); runningApplications' KVO covers every app.
+    launches = NSWorkspace.shared.observe(\.runningApplications, options: [.new]) { [weak self] _, change in
+      guard change.kind == .insertion,
+            change.newValue?.contains(where: { $0.bundleIdentifier == Config.aerospaceApp }) == true
+      else { return }
+      DispatchQueue.main.async { self?.connect(attempt: 0) }
     }
     connect(attempt: 0)
   }
