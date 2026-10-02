@@ -10,6 +10,12 @@ Main goal (user): smooth and cheap on energy. Look and behaviour don't change wi
   State in `~/.local/state/vsndbar/` (theme, sidecar-*, sleep.log, daemon.log).
 - `~/.config/aerospace` — `aerospace.toml`, `patches/{back-and-forth,bar-state,menu-bar,monitors,queries,switch-flicker,window-hiding}.patch`,
   `patches/build.sh [--install|--restore]` (source in `~/.cache/aerospace-src`, builds offline)
+- `~/.config/vsnd-setup` (github vsndrg/vsnd-setup) — the installer for others: `install.sh [install|update|uninstall]`
+  (curl | bash one-liner), README. Pins aerospace + vsndbar commits as submodule gitlinks (no checkout): after
+  pushing either repo run `./bump.sh` + push there. Pins AeroSpace 0.20.3-Beta (release zip, sha256) — bumping
+  it means porting the patches. CLI symlinked to `$(brew --prefix)/bin/aerospace`, the brew cask is removed.
+  Settings it changes (menu bar autohide, screenshot hotkeys 28/30/184, ~/Screenshots) are in `lib/settings.py`,
+  Karabiner F3–F6 in `karabiner/vsnd-setup.json` + `lib/karabiner.py`; keep them in sync with the real machine.
 - `~/.config/sketchybar` — the previous bar (Lua via SbarLua + barhelper), archived: disabled, not uninstalled.
 - `~/.config/karabiner` — F6 → `~/.local/bin/vsndbar sleep` (its karabiner.json has the user's own uncommitted edits).
 - `~/.config` is also a repo with NO commits and secrets staged (`github-copilot/auth.db`) — don't commit it.
