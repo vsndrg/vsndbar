@@ -1,5 +1,7 @@
 # VsndBar
 
+![VsndBar on a MacBook](https://raw.githubusercontent.com/vsndrg/vsnd-setup/main/docs/bar.png)
+
 A Liquid Glass bar for [AeroSpace](https://github.com/nikitabobko/AeroSpace) on macOS 26+, in place of the menu
 bar: every workspace with its app icons (and the monitor it lives on), the keyboard layout, battery and clock — on
 every display. One Swift process: AeroSpace pushes its state over a socket, everything else comes from system
