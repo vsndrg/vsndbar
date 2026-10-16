@@ -21,7 +21,7 @@ all: $(APP)
 
 $(APP): $(SOURCES) Resources/Info.plist
 	@mkdir -p $(APP)/Contents/MacOS
-	swiftc -O -target arm64-apple-macos26.0 -framework AppKit -framework Carbon -framework SwiftUI -framework IOKit -framework Network -framework CoreWLAN -framework CoreLocation -framework SystemConfiguration \
+	swiftc -O -target arm64-apple-macos26.0 -framework AppKit -framework Carbon -framework SwiftUI -framework IOKit -framework Network -framework CoreWLAN -framework CoreLocation \
 	  $(SOURCES) -o $(APP)/Contents/MacOS/VsndBar
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	codesign --force --sign "$(IDENTITY)" $(APP)

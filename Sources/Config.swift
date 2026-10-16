@@ -160,6 +160,9 @@ enum Config {
   /// `wifiHysteresis` below it), an iPhone's
   /// hotspot, a cable; offline: Wi‑Fi off, joined without internet.
   static let linkWifi = "wifi"
+  /// both islands' icons, points: the system's Wi‑Fi menu extra is this size
+  /// (measured: 16 × 12pt of ink)
+  static let netIcon: CGFloat = 14
   static let wifiArcs = [-75, -65]
   static let wifiHysteresis = 3
   static let linkHotspot = "personalhotspot"

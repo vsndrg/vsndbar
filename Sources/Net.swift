@@ -7,7 +7,7 @@
 // a VPN's utun), no polling.
 // Link: the connection itself, an icon like the system's Wi‑Fi menu extra
 // (arcs lit by the signal: CoreWLAN reports link quality changes), the
-// details (network name, local IP, router, signal…) read when its menu
+// details (network name, local IP, signal…) read when its menu
 // opens. CoreWLAN gives the network's name only to an app allowed Location
 // Services.
 
@@ -15,7 +15,6 @@ import AppKit
 import CoreLocation
 import CoreWLAN
 import Network
-import SystemConfiguration
 
 struct GeoState: Equatable {
   /// loading: the network changed, the lookup is on its way; failed: online,
@@ -87,7 +86,6 @@ final class Net: NSObject, CWEventDelegate {
   }()
   private let location = CLLocationManager()
   private let wifi = CWWiFiClient.shared()
-  private let store = SCDynamicStoreCreate(nil, "VsndBar" as CFString, nil, nil)
 
   func start() {
     if location.authorizationStatus == .notDetermined { location.requestWhenInUseAuthorization() }
@@ -227,7 +225,6 @@ final class Net: NSObject, CWEventDelegate {
     let w = i.type == .wifi ? wifi.interface(withName: i.name) : nil
     if let ssid = w?.ssid() { m.lines.append("Network: \(ssid)") }
     if let local { m.lines.append("IP Address: \(local)") }
-    if let r = router(i.name) { m.lines.append("Router: \(r)") }
     if let w, w.wlanChannel() != nil {
       m.lines.append("RSSI: \(w.rssiValue()) dBm")
       m.lines.append("Tx Rate: \(Int(w.transmitRate())) Mbps")
@@ -252,18 +249,6 @@ final class Net: NSObject, CWEventDelegate {
     if path?.status != .satisfied { m.lines.append("No Internet Connection") }
     if let local { m.copy = [("Copy IP Address", local)] }
     return m
-  }
-
-  /// The interface's router, from its network service's state.
-  private func router(_ name: String) -> String? {
-    guard let store, let keys = SCDynamicStoreCopyKeyList(store, "State:/Network/Service/.*/IPv4" as CFString)
-      as? [String] else { return nil }
-    for k in keys {
-      guard let d = SCDynamicStoreCopyValue(store, k as CFString) as? [String: Any],
-            d["InterfaceName"] as? String == name else { continue }
-      return d["Router"] as? String
-    }
-    return nil
   }
 
   private func address(_ name: String) -> String? {

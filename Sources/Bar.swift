@@ -306,14 +306,14 @@ struct StatusIslands: View, Equatable {
             }
           } else {
             Image(systemName: g.phase == .failed ? Config.geoFailed : Config.geoLoading)
-              .font(.system(size: 12 * s, weight: .semibold)).foregroundStyle(.primary)
+              .font(.system(size: Config.netIcon * s, weight: .semibold)).foregroundStyle(.primary)
               .frame(minWidth: 18 * s)
           }
         }
       }
       chip("link") {
         Image(systemName: status.link.symbol, variableValue: status.link.level)
-          .font(.system(size: 12 * s, weight: .semibold)).foregroundStyle(.primary)
+          .font(.system(size: Config.netIcon * s, weight: .semibold)).foregroundStyle(.primary)
           .frame(minWidth: 18 * s)
       }
       chip("input") {

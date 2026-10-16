@@ -144,8 +144,8 @@ AeroSpace:
   `network` = cable (the system's <···> glyph isn't an SF Symbol), offline `wifi.slash` / `wifi.exclamationmark`
   (joined, no internet) / empty arcs. CoreWLAN events (link quality ~7/min while the signal moves) re-read it;
   republished only when the icon changes. Menu read when opened (+ live on events): Network (SSID: CoreWLAN,
-  needs Location Services, Info.plist usage strings), IP, Router (SCDynamicStore service state), RSSI, Tx Rate,
-  Channel; Copy IP Address. Both menus = `NetMenu` (BatteryMenu's metrics, any number of lines).
+  needs Location Services, Info.plist usage strings), IP, RSSI, Tx Rate (Router dropped: user, useless),
+  Channel; Copy IP Address. Icons `Config.netIcon` 14pt semibold = the system Wi‑Fi extra's ink (16 × 12pt). Both menus = `NetMenu` (BatteryMenu's metrics, any number of lines).
 - Right islands animate (`Config.layout`) on any status change except the minute tick alone (no frames per minute).
 - Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
