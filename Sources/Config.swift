@@ -141,6 +141,32 @@ enum Config {
   /// pushed state (aerospace patches/bar-state.patch)
   static let aerospaceBarSocket = "/tmp/bobko.aerospace-\(NSUserName())-bar.sock"
 
+  /// The geo island (Net.swift): where the public IP is, looked up
+  /// on every network change from the first of these that answers (HTTPS,
+  /// no key; ipinfo.io turns away shared VPN addresses), each given
+  /// `geoTimeout` seconds. All failing: tried again after each of
+  /// `geoRetries`, then given up until the network changes. A change is
+  /// looked up once it has been quiet for `geoSettle` seconds.
+  static let geoServices = ["https://api.ip.sb/geoip", "https://ipwho.is/", "https://get.geojs.io/v1/ip/geo.json"]
+  static let geoTimeout: TimeInterval = 5
+  static let geoRetries: [TimeInterval] = [3, 10]
+  static let geoSettle: TimeInterval = 0.5
+  /// The geo island without a place (SF Symbols): looking it up, no service
+  /// answered (offline it is gone).
+  static let geoLoading = "globe"
+  static let geoFailed = "exclamationmark.triangle"
+  /// The link island (SF Symbols), like the system's Wi‑Fi menu extra: Wi‑Fi
+  /// (arcs lit by the signal: one more at each RSSI here, dBm, gone again
+  /// `wifiHysteresis` below it), an iPhone's
+  /// hotspot, a cable; offline: Wi‑Fi off, joined without internet.
+  static let linkWifi = "wifi"
+  static let wifiArcs = [-75, -65]
+  static let wifiHysteresis = 3
+  static let linkHotspot = "personalhotspot"
+  static let linkEthernet = "network"
+  static let linkWifiOff = "wifi.slash"
+  static let linkNoInternet = "wifi.exclamationmark"
+
   /// Darwin notification `vsndbar toggle` posts (cmd-shift-b).
   static let toggleNotification = "com.vsndrg.vsndbar.toggle"
 }

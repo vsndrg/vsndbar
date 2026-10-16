@@ -7,7 +7,7 @@
 // display carry that display's device glyph (laptop, iPad, monitor) after the
 // digit — so any workspace can be found from any bar, and it's clear where a
 // click leads.
-// Right, the same on every display: keyboard layout │ battery │ clock.
+// Right, the same on every display: geo (public IP) │ link │ keyboard layout │ battery │ clock.
 
 import AppKit
 import Carbon
@@ -51,6 +51,8 @@ struct DisplayState: Equatable {
 struct StatusState: Equatable {
   var input = "EN", date = "", time = ""
   var battery: BatteryState?
+  var geo = GeoState()
+  var link = LinkState()
 }
 
 struct BarState: Equatable {
@@ -115,6 +117,7 @@ final class Daemon {
   let corners = Corners(radius: Config.screenCorner)
   let sidecar = SidecarReconnect()
   let aerospace = AeroSpace()
+  let net = Net()
 
   var theme = Theme.load()
   /// cmd-shift-b: the system menu bar instead of the bar (showMenuBar)
@@ -177,6 +180,19 @@ final class Daemon {
     status.battery = Battery.read()
     updateClock()
     Battery.watch { [weak self] in self?.batteryChanged() }
+    net.onGeo = { [weak self] s in
+      guard let self else { return }
+      status.geo = s
+      publish()
+    }
+    net.onLink = { [weak self] s in
+      guard let self else { return }
+      status.link = s
+      publish()
+    }
+    net.onQuality = { [weak self] in self?.bar.linkChanged() }
+    bar.linkInfo = { [weak self] in self?.net.linkMenu() ?? MenuInfo(header: "") }
+    net.start()
     DistributedNotificationCenter.default().addObserver(
       forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil, queue: .main
     ) { [weak self] _ in

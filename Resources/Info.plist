@@ -18,6 +18,10 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>The Wi‑Fi network's name in the network menu.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>The Wi‑Fi network's name in the network menu.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

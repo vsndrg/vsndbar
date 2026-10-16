@@ -4,7 +4,7 @@
 //
 // The daemon (Daemon.swift) hands over the whole state; a change lands in one
 // SwiftUI transaction per window: islands, lens and text move together.
-// Clicks, hover, the theme menu and the battery menu are handled here.
+// Clicks, hover, the theme menu and the battery and network menus are handled here.
 
 import AppKit
 import SwiftUI
@@ -24,7 +24,7 @@ final class BarModel: ObservableObject {
   /// false until the panel is first shown: the bar is laid out zero wide, then
   /// springs open (the islands fly in from the left edge)
   @Published var appeared = false
-  var hits: [String: CGRect] = [:] // "ws.N" | "spaces" | "input" | "battery" | "clock", view points from the top-left
+  var hits: [String: CGRect] = [:] // "ws.N" | "spaces" | "geo" | "link" | "input" | "battery" | "clock", view points from the top-left
   let lens = Lens()
   /// What the glass lies on: luminance per point column (backdropProfile), nil = unknown.
   var backdrop: [Float]?
@@ -41,7 +41,7 @@ final class BarModel: ObservableObject {
   var scale: CGFloat { max(0.5, (display.strip - style.gap) / style.island) }
   var look: Look { Look(style: style, scale: scale) }
 
-  static let islands = ["spaces", "input", "battery", "clock"]
+  static let islands = ["spaces", "geo", "link", "input", "battery", "clock"]
 
   /// Each island's appearance from the mean luminance under it (the whole
   /// strip's until the layout reports where it is). Two thresholds: an island
@@ -296,6 +296,26 @@ struct StatusIslands: View, Equatable {
   var body: some View {
     let s = look.scale, st = look.style
     HStack(spacing: st.gap) {
+      let g = status.geo
+      if g.phase != .offline {
+        chip("geo") {
+          if g.phase == .ok {
+            HStack(spacing: 5 * s) {
+              Text(g.flag).font(look.font(true))
+              Text(g.place).font(look.font(true)).foregroundStyle(.primary)
+            }
+          } else {
+            Image(systemName: g.phase == .failed ? Config.geoFailed : Config.geoLoading)
+              .font(.system(size: 12 * s, weight: .semibold)).foregroundStyle(.primary)
+              .frame(minWidth: 18 * s)
+          }
+        }
+      }
+      chip("link") {
+        Image(systemName: status.link.symbol, variableValue: status.link.level)
+          .font(.system(size: 12 * s, weight: .semibold)).foregroundStyle(.primary)
+          .frame(minWidth: 18 * s)
+      }
       chip("input") {
         Text(status.input).font(look.font(true)).foregroundStyle(.primary)
           .frame(minWidth: 18 * s)
@@ -913,6 +933,86 @@ final class BatteryMenu: NSObject, NSMenuDelegate {
   }
 }
 
+/// A network menu (geo, link): the battery menu's layout (header, grey
+/// lines, separator, rows) with as many lines as there is to say. Opens on a
+/// click on its island; updates in place while open.
+final class NetMenu: NSObject, NSMenuDelegate {
+  let menu = NSMenu()
+  let info = BatteryMenu.SeparatedView()
+  let header = menuLabel("", .systemFont(ofSize: 0, weight: .semibold), .labelColor)
+  var lines: [NSTextField] = []
+  var rows: [NSMenuItem] = []
+  /// what the rows copy: rebuilt only when it changes (not under the mouse)
+  var copies: [String] = []
+  var isOpen = false
+
+  override init() {
+    super.init()
+    menu.autoenablesItems = false
+    menu.delegate = self
+    info.addSubview(header)
+    info.autoresizingMask = .width
+    let item = NSMenuItem()
+    item.view = info
+    menu.addItem(item)
+  }
+
+  func update(_ m: MenuInfo) {
+    header.stringValue = m.header
+    while lines.count < m.lines.count {
+      let l = menuLabel("", .menuFont(ofSize: 12), .disabledControlTextColor)
+      info.addSubview(l)
+      lines.append(l)
+    }
+    for (i, l) in lines.enumerated() {
+      l.isHidden = i >= m.lines.count
+      l.stringValue = i < m.lines.count ? m.lines[i] : ""
+    }
+
+    if m.copy.map(\.1) != copies || m.copy.count != rows.count {
+      copies = m.copy.map(\.1)
+      for r in rows { menu.removeItem(r) }
+      rows = m.copy.map { title, value in
+        let item = NSMenuItem()
+        item.view = MenuRow(title) {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(value, forType: .string)
+        }
+        menu.addItem(item)
+        return item
+      }
+    }
+
+    // the battery menu's metrics: header caps 16.5pt below the top, lines 18pt
+    // apart from 25pt under it, the separator 21.5pt under the last line
+    header.sizeToFit()
+    header.setFrameOrigin(NSPoint(x: 12, y: 8))
+    var w = header.frame.width
+    for (i, l) in lines.enumerated() where !l.isHidden {
+      l.sizeToFit()
+      l.setFrameOrigin(NSPoint(x: 12, y: 33.5 + 18 * CGFloat(i)))
+      w = max(w, l.frame.width)
+    }
+    let last = m.lines.isEmpty ? 10.5 : 33.5 + 18 * CGFloat(m.lines.count - 1)
+    info.line = rows.isEmpty ? -10 : last + 21.5
+    info.frame = NSRect(x: 0, y: 0, width: w + 24, height: rows.isEmpty ? last + 18 : info.line + 6)
+    info.needsDisplay = true
+  }
+
+  /// Placed like the battery menu (BatteryMenu.show).
+  func show(_ m: MenuInfo, under anchor: NSRect, gap: CGFloat, screen: NSRect) {
+    update(m)
+    let x = min(anchor.minX, screen.maxX - gap - menu.size.width)
+    menu.popUp(positioning: nil, at: NSPoint(x: x, y: anchor.minY - gap - 5), in: nil)
+  }
+
+  func menuWillOpen(_ menu: NSMenu) { isOpen = true }
+  func menuDidClose(_ menu: NSMenu) {
+    isOpen = false
+    for i in menu.items { (i.view as? MenuRow)?.hovered = false }
+  }
+}
+
 // MARK: - Bar
 
 final class GlassBar {
@@ -923,6 +1023,10 @@ final class GlassBar {
   var blurs: [CGDirectDisplayID: NSPanel] = [:]
   let menu = GlassMenu()
   let battery = BatteryMenu()
+  let geo = NetMenu()
+  let link = NetMenu()
+  /// the link menu's details, read when it opens (Net.linkMenu)
+  var linkInfo: (() -> MenuInfo)?
   var warmed = false
   var onMenuSelect: ((String) -> Void)? {
     get { menu.onSelect }
@@ -943,6 +1047,8 @@ final class GlassBar {
   func screensChanged() {
     menu.hide()
     battery.menu.cancelTracking()
+    geo.menu.cancelTracking()
+    link.menu.cancelTracking()
     apply(state, force: true)
   }
 
@@ -1013,6 +1119,8 @@ final class GlassBar {
     if new.hidden {
       menu.hide()
       battery.menu.cancelTracking()
+      geo.menu.cancelTracking()
+      link.menu.cancelTracking()
     }
     menu.update(style: new.style)
     if !warmed, let d = new.displays.first {
@@ -1020,6 +1128,8 @@ final class GlassBar {
       if Config.themeMenu { menu.warm(style: new.style, strip: d.strip) }
     }
     if battery.isOpen, let b = new.status.battery { battery.update(b) }
+    if geo.isOpen { geo.update(new.status.geo.menu) }
+    if link.isOpen && new.status.link != old.status.link { linkChanged() }
   }
 
   /// The same cells (numbers, apps, device glyphs), whichever is shown: the
@@ -1077,6 +1187,13 @@ final class GlassBar {
               let f = panels[did]?.frame, let sc = screen(did) {
       let anchor = NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
       battery.show(b, under: anchor, gap: m.style.gap, screen: sc.frame)
+    } else if let r = m.hits["geo"], r.contains(p), let f = panels[did]?.frame, let sc = screen(did) {
+      let anchor = NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
+      geo.show(m.status.geo.menu, under: anchor, gap: m.style.gap, screen: sc.frame)
+    } else if let r = m.hits["link"], r.contains(p), let i = linkInfo?(), let f = panels[did]?.frame,
+              let sc = screen(did) {
+      let anchor = NSRect(x: f.minX + r.minX, y: f.maxY - r.maxY, width: r.width, height: r.height)
+      link.show(i, under: anchor, gap: m.style.gap, screen: sc.frame)
     } else if m.hits["input"]?.contains(p) == true {
       nextLayout()
     } else if m.hits["clock"]?.contains(p) == true {
@@ -1096,6 +1213,11 @@ final class GlassBar {
       m.backdrop = prof
       m.retone()
     }
+  }
+
+  /// The connection changed: an open link menu reads it again.
+  func linkChanged() {
+    if link.isOpen, let i = linkInfo?() { link.update(i) }
   }
 
   /// System icon theme changed: icons are re-read from NSWorkspace.

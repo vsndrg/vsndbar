@@ -133,6 +133,19 @@ AeroSpace:
   the rest at `Config.batteryTrack` 40% (user asked: 89% must not look full), level (11pt, `Config.batteryWeight`
   Semibold: knocked-out text reads thin) knocked out of both; bolt = separate image with a scale+fade transition; template
   image, red at ≤20% off AC; menu wording = macOS menu; updates as soon as IOKit reports (user OK'd).
+- Network = two islands (`Net.swift`), order geo │ link │ layout. Geo: flag emoji (colored, dims with the rest)
+  + city of the PUBLIC IP (VPN exit), English; gone while offline. Looked up only on a network change
+  (NWPathMonitor; signature = status + interfaces + IPv4 addresses, 0.5s settle) and on wake after a failure:
+  HTTPS `Config.geoServices` api.ip.sb → ipwho.is → geojs.io (ipinfo.io 429s on shared WARP addresses), retries
+  3s/10s. No polling (user: a router-side VPN change isn't noticed, OK). `globe` looking up,
+  `exclamationmark.triangle` no service answered. Menu: City, Country / IP / provider / Copy IP Address.
+  Link: icon like the system Wi‑Fi extra — `wifi` arcs by RSSI (`wifiArcs` −75/−65, 3 dB hysteresis: user's RSSI
+  sits at −65; variableValue lights layers past 0, ⅓, ⅔ → 0.2/0.5/1), `personalhotspot` (expensive path),
+  `network` = cable (the system's <···> glyph isn't an SF Symbol), offline `wifi.slash` / `wifi.exclamationmark`
+  (joined, no internet) / empty arcs. CoreWLAN events (link quality ~7/min while the signal moves) re-read it;
+  republished only when the icon changes. Menu read when opened (+ live on events): Network (SSID: CoreWLAN,
+  needs Location Services, Info.plist usage strings), IP, Router (SCDynamicStore service state), RSSI, Tx Rate,
+  Channel; Copy IP Address. Both menus = `NetMenu` (BatteryMenu's metrics, any number of lines).
 - Right islands animate (`Config.layout`) on any status change except the minute tick alone (no frames per minute).
 - Appearance (daemon start, new display): laid out zero wide, then springs open on `.bouncy`.
 - Animations are picked in `Config.swift` (`lens`, `layout`, `appear`, `popup`, `hover`; all `.bouncy` except
@@ -199,6 +212,7 @@ benchmark's own `aerospace` CLI calls), drops 0.8–1.2%, worst gap ~20 ms, bar 
 process 1.2 J + Lua + its processes). Idle: 20 wakeups/min (old: ~143).
 
 ## Open issues / TODO
+- Network islands: offline / failed / hotspot / cable states not seen live yet (would cut this machine's network).
 - Not tested yet by hand: Sidecar connect/disconnect (bars appear/vanish), F6 / lid sleep reconnect.
 - Energy idea, NOT applied (touches "system .bouncy only"): SwiftUI runs `.bouncy` ~1.3s until 0.001pt;
   ending the lens spring at 0.05pt (same Spring math via CustomAnimation, additive merge = same retarget)
